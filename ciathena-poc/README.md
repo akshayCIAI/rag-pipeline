@@ -18,7 +18,7 @@ ciathena-poc/
     loader.py               # parse + validate artifact YAML (envelope + body)
     chunker.py              # one list-item -> one chunk (the universal rule)
     embedder.py             # Azure OpenAI embedder + offline fake fallback
-    store.py                # persistent Chroma: ingest + metadata-filtered retrieval
+    store.py                # Chroma vector store: ingest + metadata-filtered retrieval (persistent or in-memory fallback)
     llm.py                  # Azure OpenAI chat client + offline stub + retry logic
     catalog.py              # builds routing catalog from artifact metadata
     router_node.py          # LLM query router (infers usecase, component_type, intent)
@@ -231,6 +231,7 @@ only that artifact.
 
 - **LLM retry logic**: transient Azure errors (500, 502, 503, 504, 429) are retried up to 3 times with exponential backoff (2s, 5s, 10s) before failing
 - **Graceful degradation**: no blob vars = local mode, no Azure creds = offline mode with fake embedder/LLM
+- **ChromaDB fallback**: `PersistentClient` is used by default for local persistence; falls back to in-memory `chromadb.Client()` on platforms where SQLite/persistent storage is restricted (e.g. Streamlit Cloud)
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
 
 ## What this PoC covers (and does not)
