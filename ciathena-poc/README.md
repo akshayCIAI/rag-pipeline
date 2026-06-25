@@ -103,7 +103,8 @@ user_query
     │
     ▼
 3. RERANK / DOCUMENT-FILTER
-   cosine threshold + LLM relevance grading (uses rewritten query) → top-k
+   high-confidence chunks (cosine ≥ 0.7) auto-pass
+   borderline chunks batch-graded in 1 LLM call → top-k
     │
     ▼
 4. GENERATE (LLM)
@@ -273,6 +274,7 @@ built-in defaults when no blob copy exists.
 - **ChromaDB fallback**: `PersistentClient` is used locally; on Streamlit Cloud (detected via `/mount/src` or `STREAMLIT_SHARING_MODE`), uses in-memory `chromadb.Client()` directly to avoid Rust-binding initialization failures
 - **Artifact validation**: invalid YAML files (wrong `component_type`, missing fields, malformed YAML syntax) are skipped with a warning instead of crashing the app; skipped files shown in the sidebar
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
+- **Batch rerank optimization**: rerank step uses a single batched LLM call instead of one per chunk, reducing rerank from ~8 calls to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
 
 ## What this PoC covers (and does not)
 

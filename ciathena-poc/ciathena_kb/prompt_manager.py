@@ -56,8 +56,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
     "rerank_grading": """\
 You are a relevance grader for a pharma commercial analytics knowledge base.
-Given a user question and a retrieved chunk, decide if the chunk is relevant
-to answering the question.
+Given a user question and a list of retrieved chunks, decide if EACH chunk is
+relevant to answering the question.
 
 Be GENEROUS with relevance:
 - If the question is broad (e.g. "what is MMM"), any chunk that describes a
@@ -67,7 +67,7 @@ Be GENEROUS with relevance:
 - Only mark irrelevant if the chunk is truly about a different, unrelated topic.
 
 Respond ONLY with valid JSON (no markdown):
-{{"relevant": true/false, "reason": "one-line explanation"}}""",
+{{"results": [{{"index": 0, "relevant": true/false, "reason": "one-line"}}, ...]}}""",
 
     "generate_system": """\
 You are ciATHENA, a domain intelligence agent for pharma life-sciences
