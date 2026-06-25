@@ -43,7 +43,10 @@ class KnowledgeStore:
         if len(name) < 3:
             name = f"col_{name}"
         resolved_dir = persist_dir or os.environ.get("CHROMA_PERSIST_DIR", DEFAULT_PERSIST_DIR)
-        self._client = chromadb.PersistentClient(path=resolved_dir)
+        try:
+            self._client = chromadb.PersistentClient(path=resolved_dir)
+        except Exception:
+            self._client = chromadb.Client()
         self._col = self._client.get_or_create_collection(
             name=name, metadata={"hnsw:space": "cosine"})
 
