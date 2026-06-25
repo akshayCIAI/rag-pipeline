@@ -90,6 +90,7 @@ def run_repl(graph) -> None:
     print(f"  ciATHENA Knowledge Spine — Interactive Mode")
     print(f"  Type your question, or 'quit' / 'exit' to stop.")
     print(f"{'═' * 70}")
+    history: list[dict[str, str]] = []
     while True:
         try:
             query = input("\n  You: ").strip()
@@ -99,8 +100,14 @@ def run_repl(graph) -> None:
         if not query or query.lower() in ("quit", "exit", "q"):
             print("  Goodbye!")
             break
-        result = graph.invoke({"user_query": query})
+        result = graph.invoke({
+            "user_query": query,
+            "conversation_history": history[-10:],
+        })
         print_result(result)
+        answer = result.get("answer", "")
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": answer})
 
 
 def main() -> None:

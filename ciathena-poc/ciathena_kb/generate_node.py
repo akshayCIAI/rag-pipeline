@@ -55,8 +55,11 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None) -> Callab
         messages = [
             {"role": "system", "content": gen_prompt.format(
                 intent=intent, chunks=chunks_text)},
-            {"role": "user", "content": user_query},
         ]
+        history = state.get("conversation_history", [])
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_query})
 
         answer = llm.chat(messages, temperature=0.1)
 
@@ -78,6 +81,7 @@ def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None) -> Call
         route: dict[str, Any],
         graded_chunks: list[dict[str, Any]],
         user_query: str,
+        conversation_history: list[dict[str, str]] | None = None,
     ) -> Generator[str, None, None]:
         if not route.get("in_domain", True) or not graded_chunks:
             yield NO_CONTEXT_RESPONSE
@@ -89,8 +93,10 @@ def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None) -> Call
         messages = [
             {"role": "system", "content": gen_prompt.format(
                 intent=intent, chunks=chunks_text)},
-            {"role": "user", "content": user_query},
         ]
+        if conversation_history:
+            messages.extend(conversation_history)
+        messages.append({"role": "user", "content": user_query})
 
         yield from llm.chat_stream(messages, temperature=0.1)
 
