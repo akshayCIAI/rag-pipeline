@@ -7,7 +7,7 @@ survives filtering. Obeys ai_routing_note from the artifacts.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 
 from .llm import ChatLLM
 
@@ -68,3 +68,30 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None) -> Callab
         }
 
     return generate_node
+
+
+def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None) -> Callable[..., Generator[str, None, None]]:
+    """Return a callable that streams the answer token-by-token."""
+    gen_prompt = system_prompt or GENERATE_SYSTEM_PROMPT
+
+    def stream_generate(
+        route: dict[str, Any],
+        graded_chunks: list[dict[str, Any]],
+        user_query: str,
+    ) -> Generator[str, None, None]:
+        if not route.get("in_domain", True) or not graded_chunks:
+            yield NO_CONTEXT_RESPONSE
+            return
+
+        intent = route.get("intent", "definition")
+        chunks_text = _format_chunks(graded_chunks)
+
+        messages = [
+            {"role": "system", "content": gen_prompt.format(
+                intent=intent, chunks=chunks_text)},
+            {"role": "user", "content": user_query},
+        ]
+
+        yield from llm.chat_stream(messages, temperature=0.1)
+
+    return stream_generate

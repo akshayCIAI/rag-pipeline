@@ -107,9 +107,9 @@ user_query
    borderline chunks batch-graded in 1 LLM call → top-k
     │
     ▼
-4. GENERATE (LLM)
+4. GENERATE (LLM, streamed)
    grounded answer + citations [artifact_id::chunk_id]
-   refuses when no approved context survives filtering
+   tokens stream to UI in real time; refuses when no approved context survives filtering
 ```
 
 The router uses a **routing catalog** built at startup from artifact metadata
@@ -209,7 +209,7 @@ streamlit run app.py
 ```
 
 Features:
-- **Chat interface** — ask questions, see answers with citations, routing details, and retrieved chunks
+- **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
@@ -275,6 +275,7 @@ built-in defaults when no blob copy exists.
 - **Artifact validation**: invalid YAML files (wrong `component_type`, missing fields, malformed YAML syntax) are skipped with a warning instead of crashing the app; skipped files shown in the sidebar
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
 - **Batch rerank optimization**: rerank step uses a single batched LLM call instead of one per chunk, reducing rerank from ~8 calls to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
+- **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response; route/retrieve/rerank run first with a spinner, then the answer appears token-by-token
 
 ## What this PoC covers (and does not)
 
@@ -285,7 +286,8 @@ LLM relevance grading, grounded answer generation with citations, graceful
 refusal on out-of-domain or no-context queries, smart re-ingestion with
 version tracking, Azure Blob Storage integration (versioned artifacts +
 prompt templates), auto-ingest on startup, LLM retry logic, blob-backed
-prompt management, and Streamlit demo UI with artifact upload and prompt editor.
+prompt management, streaming answer generation, and Streamlit demo UI with
+artifact upload and prompt editor.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those

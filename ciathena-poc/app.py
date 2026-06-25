@@ -31,6 +31,8 @@ from ciathena_kb import (
     get_chat_llm,
     KnowledgeStore,
     build_agent_graph,
+    build_pre_generate_graph,
+    make_stream_generate,
     IngestionLog,
     ArtifactError,
     get_blob_client,
@@ -154,8 +156,9 @@ def load_and_ensure_ingested():
 
     prompts = {key: pm.get(key) for key in pm.all_keys}
     llm = get_llm_cached()
-    graph = build_agent_graph(store=store, artifacts=artifacts, llm=llm, prompts=prompts)
-    return artifacts, graph
+    pre_graph = build_pre_generate_graph(store=store, artifacts=artifacts, llm=llm, prompts=prompts)
+    stream_gen = make_stream_generate(llm, system_prompt=prompts.get("generate_system"))
+    return artifacts, pre_graph, stream_gen
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +173,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Load pipeline
 # ---------------------------------------------------------------------------
-artifacts, graph = load_and_ensure_ingested()
+artifacts, pre_graph, stream_gen = load_and_ensure_ingested()
 embedder = get_embedder_cached()
 store = get_store_cached()
 llm = get_llm_cached()
@@ -434,10 +437,11 @@ if query:
         st.markdown(query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            start = time.time()
+        start = time.time()
+
+        with st.spinner("Retrieving relevant knowledge..."):
             try:
-                result = graph.invoke({"user_query": query})
+                result = pre_graph.invoke({"user_query": query})
             except Exception as e:
                 elapsed = time.time() - start
                 error_msg = (
@@ -454,14 +458,32 @@ if query:
                     "chunks_expander": None,
                 })
                 st.stop()
-            elapsed = time.time() - start
 
         route = result.get("route", {})
         graded = result.get("graded_chunks", [])
-        answer = result.get("answer", "")
-        citations = result.get("citations", [])
 
-        st.markdown(answer)
+        try:
+            answer = st.write_stream(stream_gen(route, graded, query))
+        except Exception as e:
+            elapsed = time.time() - start
+            error_msg = (
+                f"**Azure OpenAI is temporarily unavailable.** "
+                f"The service returned an error during answer generation: "
+                f"`{type(e).__name__}: {e}`\n\n"
+                f"Please try again in a few minutes."
+            )
+            st.error(error_msg, icon="⚠️")
+            st.caption(f"⏱️ {elapsed:.1f}s")
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": error_msg,
+                "route_expander": None,
+                "chunks_expander": None,
+            })
+            st.stop()
+
+        elapsed = time.time() - start
+        citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
 
         if citations:
             citation_text = ", ".join(f"`{c}`" for c in citations)

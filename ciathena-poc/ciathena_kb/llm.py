@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, Protocol
+from typing import Any, Generator, Protocol
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = [2, 5, 10]
@@ -28,6 +28,7 @@ class ChatLLM(Protocol):
     model_name: str
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str: ...
     def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict: ...
+    def chat_stream(self, messages: list[dict[str, str]], **kwargs: Any) -> Generator[str, None, None]: ...
 
 
 class AzureChatLLM:
@@ -83,6 +84,21 @@ class AzureChatLLM:
         )
         return json.loads(resp.choices[0].message.content or "{}")
 
+    def chat_stream(self, messages: list[dict[str, str]], **kwargs: Any) -> Generator[str, None, None]:
+        from openai import BadRequestError
+        create_kwargs = dict(model=self._deployment, messages=messages, stream=True, **kwargs)
+        try:
+            response = self._client.chat.completions.create(**create_kwargs)
+        except BadRequestError as e:
+            if "temperature" in str(e) and "temperature" in create_kwargs:
+                create_kwargs.pop("temperature", None)
+                response = self._client.chat.completions.create(**create_kwargs)
+            else:
+                raise
+        for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
 
 class FakeChatLLM:
     """Offline stub. Returns a canned response so the pipeline wiring is testable
@@ -102,6 +118,9 @@ class FakeChatLLM:
             "intent": "definition",
             "rewritten_query": messages[-1].get("content", "") if messages else "",
         }
+
+    def chat_stream(self, messages: list[dict[str, str]], **kwargs: Any) -> Generator[str, None, None]:
+        yield "[offline stub] No chat LLM configured. Set AZURE_OPENAI_CHAT_* env vars."
 
 
 def get_chat_llm(model_name: str | None = None) -> ChatLLM:

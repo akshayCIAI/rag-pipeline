@@ -85,3 +85,57 @@ def build_agent_graph(
     g.add_edge("decline", END)
 
     return g.compile()
+
+
+def build_pre_generate_graph(
+    store: KnowledgeStore,
+    artifacts: list[Artifact],
+    llm: ChatLLM | None = None,
+    candidate_pool: int | None = None,
+    top_k: int | None = None,
+    prompts: dict[str, str] | None = None,
+):
+    """Build graph that runs route → retrieve → rerank only (no generate).
+
+    Used with streaming: run this graph to get routed + reranked chunks,
+    then stream the generate step separately via make_stream_generate().
+    """
+    if llm is None:
+        llm = get_chat_llm()
+
+    pool = candidate_pool or int(os.environ.get("RETRIEVAL_CANDIDATE_POOL", "12"))
+    k = top_k or int(os.environ.get("RETRIEVAL_TOP_K", "4"))
+    p = prompts or {}
+
+    catalog = build_routing_catalog(artifacts)
+
+    router = make_router_node(llm, catalog, system_prompt=p.get("router_system"))
+    retriever = make_retrieval_node(store, candidate_pool=pool)
+    reranker = make_rerank_node(llm, top_k=k, system_prompt=p.get("rerank_grading"))
+
+    decline_node = lambda state: {
+        "answer": (
+            "I don't have approved knowledge artifacts covering this topic. "
+            "This may be outside the currently loaded corpus, or the relevant "
+            "artifacts haven't been ingested yet."
+        ),
+        "citations": [],
+        "graded_chunks": [],
+    }
+
+    g = StateGraph(AgentState)
+    g.add_node("route", router)
+    g.add_node("retrieve", retriever)
+    g.add_node("rerank", reranker)
+    g.add_node("decline", decline_node)
+
+    g.add_edge(START, "route")
+    g.add_conditional_edges("route", _should_generate, {
+        "continue": "retrieve",
+        "decline": "decline",
+    })
+    g.add_edge("retrieve", "rerank")
+    g.add_edge("rerank", END)
+    g.add_edge("decline", END)
+
+    return g.compile()

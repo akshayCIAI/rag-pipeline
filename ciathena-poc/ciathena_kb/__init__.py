@@ -8,8 +8,8 @@ from .llm import get_chat_llm, ChatLLM, AzureChatLLM, FakeChatLLM
 from .catalog import build_routing_catalog
 from .router_node import make_router_node
 from .rerank_node import make_rerank_node
-from .generate_node import make_generate_node
-from .agent_graph import build_agent_graph
+from .generate_node import make_generate_node, make_stream_generate
+from .agent_graph import build_agent_graph, build_pre_generate_graph
 from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
 from .prompt_manager import PromptManager
@@ -22,8 +22,8 @@ __all__ = [
     "AgentState", "make_retrieval_node", "build_demo_graph",
     "get_chat_llm", "ChatLLM", "AzureChatLLM", "FakeChatLLM",
     "build_routing_catalog",
-    "make_router_node", "make_rerank_node", "make_generate_node",
-    "build_agent_graph",
+    "make_router_node", "make_rerank_node", "make_generate_node", "make_stream_generate",
+    "build_agent_graph", "build_pre_generate_graph",
     "IngestionLog",
     "ArtifactBlobClient", "get_blob_client",
     "PromptManager",
