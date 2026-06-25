@@ -37,7 +37,7 @@ def _load_from_blob(blob):
         uri = f"blob://{blob.container_name}/artifacts/{name}"
         try:
             artifact = load_artifact_from_bytes(data, source_name=uri)
-        except ArtifactError as e:
+        except Exception as e:
             print(f"  SKIP  {name}: {e}")
             continue
         artifacts.append(artifact)

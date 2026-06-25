@@ -120,7 +120,7 @@ def load_and_ensure_ingested():
             uri = f"blob://{blob.container_name}/artifacts/{name}"
             try:
                 artifact = load_artifact_from_bytes(data, source_name=uri)
-            except ArtifactError as e:
+            except Exception as e:
                 print(f"  Skipping {name}: {e}")
                 skipped_files.append((name, str(e)))
                 continue
@@ -290,7 +290,7 @@ with st.sidebar:
                 uri = f"blob://{blob.container_name}/artifacts/{name}"
                 try:
                     a = load_artifact_from_bytes(data, source_name=uri)
-                except ArtifactError as e:
+                except Exception as e:
                     reingest_skipped.append((name, str(e)))
                     continue
                 fresh_artifacts.append(a)
