@@ -39,11 +39,11 @@ class AzureChatLLM:
         AZURE_OPENAI_CHAT_API_VERSION (default 2024-02-01)
     """
 
-    def __init__(self, model_name: str = "gpt-4o"):
+    def __init__(self, model_name: str | None = None):
         from openai import AzureOpenAI
 
-        self.model_name = model_name
         self._deployment = os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"]
+        self.model_name = model_name or self._deployment
         self._client = AzureOpenAI(
             azure_endpoint=_chat_env("ENDPOINT"),
             api_key=_chat_env("API_KEY"),
@@ -104,7 +104,7 @@ class FakeChatLLM:
         }
 
 
-def get_chat_llm(model_name: str = "gpt-4o") -> ChatLLM:
+def get_chat_llm(model_name: str | None = None) -> ChatLLM:
     """Return Azure chat LLM if env is configured, else the fake stub."""
     has_deployment = bool(os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT"))
     has_endpoint = bool(_chat_env("ENDPOINT"))
