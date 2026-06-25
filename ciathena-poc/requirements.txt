@@ -1,0 +1,11 @@
+pyyaml>=6.0
+chromadb>=0.5
+python-dotenv>=1.0
+# LLM / embeddings (Azure OpenAI). Optional for offline runs (fake embedder used).
+openai>=1.30
+# LangGraph (optional; the retrieval node also works standalone).
+langgraph>=0.2
+# Streamlit demo UI
+streamlit>=1.35
+# Azure Blob Storage (optional; for cloud artifact storage)
+azure-storage-blob>=12.19

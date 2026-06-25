@@ -1,0 +1,76 @@
+---
+artifact_id: mmm-methodology-core-001
+title: "MMM Core Configuration Steps"
+artifact_type: usecase_methodology
+schema_version: 1.0
+content_version: 1.0
+usecase: MMM
+layer: usecase
+component_type: methodology
+personas: [data_scientist, sme]
+client_agnostic: true
+inherits_from: [gen-concept-pharma-001]
+depends_on: []
+owner: knowledge_engineering
+review_status: approved
+last_reviewed: 2026-05-27
+embedding_model: text-embedding-3-large
+---
+workflow_name: "MMM configuration workflow"
+phases: [data_transformation, feature_engineering, modeling, output_tables]
+steps:
+  - step_id: fe_adstock
+    phase: feature_engineering
+    name: "Adstock / carryover transformation"
+    purpose: |
+      Transform raw channel exposure into a lagged exposure stock so the
+      model can attribute delayed promotional effect to current outcomes.
+    inputs: [channel_activity_weekly, channel_taxonomy]
+    logic: |
+      Apply geometric adstock A_t = x_t + lambda * A_(t-1) per channel.
+      Channel-specific decay (lambda) is estimated or set from SME-reviewed
+      priors. Never invent decay rates for a client brand.
+    outputs: [adstocked_channel_features]
+    depends_on_steps: [dt_channel_mapping]
+    sme_notes: |
+      Field, samples, speaker, DTC, and HCP digital usually need different
+      carryover assumptions; flag each for SME review.
+
+  - step_id: fe_saturation
+    phase: feature_engineering
+    name: "Saturation / response-curve transformation"
+    purpose: |
+      Capture diminishing returns so the model can support marginal ROI and
+      budget optimization questions.
+    inputs: [adstocked_channel_features]
+    logic: |
+      Apply a saturation function (log, Hill, tanh, or logistic) to the
+      adstocked exposure. Choice of curve should be reviewed against whether
+      diminishing returns are behavioural or reach-exhaustion driven.
+    outputs: [saturated_channel_features]
+    depends_on_steps: [fe_adstock]
+    sme_notes: |
+      Saturation powers "how much more can we productively spend" analysis.
+
+  - step_id: model_selection
+    phase: modeling
+    name: "Model family selection"
+    purpose: |
+      Choose a model architecture that fits the decision horizon, data
+      richness, and required causal confidence.
+    inputs: [saturated_channel_features, outcome_variable, payer_access_features]
+    logic: |
+      For mature brands with rich HCP history, prefer a regularized HCP-month
+      panel. For DTC or geo-varying access, prefer geo-time or hierarchical
+      Bayesian. For launch brands with short history, prefer Bayesian with
+      analogous-brand priors.
+    outputs: [selected_model_spec]
+    depends_on_steps: [fe_saturation]
+    sme_notes: |
+      The preferred model is not the highest in-sample fit; it balances
+      interpretability, validation, plausibility, and decision usefulness.
+    decision_points:
+      - condition: "launch brand, <12-18 months data"
+        guidance: "use Bayesian / hierarchical with priors, not OLS"
+      - condition: "high channel collinearity"
+        guidance: "use Ridge / Elastic Net or channel grouping"

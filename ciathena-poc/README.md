@@ -1,0 +1,248 @@
+# ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
+
+An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
+artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
+life-sciences commercial analytics questions with **LLM-powered query routing,
+metadata pre-filtering, relevance grading, and grounded answer generation with
+citations**.
+
+This is **Scenario B**: no managed/Foundry agent. Our own code controls
+embedding, metadata filtering, retrieval, routing, and generation — exposed as
+a LangGraph pipeline.
+
+## Layout
+
+```
+ciathena-poc/
+  ciathena_kb/              # core package
+    loader.py               # parse + validate artifact YAML (envelope + body)
+    chunker.py              # one list-item -> one chunk (the universal rule)
+    embedder.py             # Azure OpenAI embedder + offline fake fallback
+    store.py                # persistent Chroma: ingest + metadata-filtered retrieval
+    llm.py                  # Azure OpenAI chat client + offline stub + retry logic
+    catalog.py              # builds routing catalog from artifact metadata
+    router_node.py          # LLM query router (infers usecase, component_type, intent)
+    retrieval_node.py       # LangGraph retrieval node (metadata pre-filter + General OR-merge)
+    rerank_node.py          # post-retrieval relevance grading + threshold
+    generate_node.py        # grounded answer generation with citations
+    agent_graph.py          # assembles the full LangGraph: route → retrieve → rerank → generate
+    ingestion_log.py        # version-aware ingestion tracking (skip unchanged artifacts)
+    blob_client.py          # Azure Blob Storage client for artifact files (optional)
+  artifacts/                # 3 sample artifacts (concept, methodology, playbook)
+  ingest.py                 # CLI: smart re-ingest + blob/local source + --clear flag
+  chat.py                   # CLI: interactive or single-query agentic Q&A
+  app.py                    # Streamlit demo: chat + upload + blob storage + ingestion log
+  demo.py                   # original retrieval-only end-to-end runner
+  .env.example              # env var template — copy to .env
+  requirements.txt
+```
+
+## Quick start
+
+```bash
+cd ciathena-poc
+pip install -r requirements.txt
+
+# 1. Copy and fill in your Azure credentials
+cp .env.example .env        # then edit .env with your values
+
+# 2. Ingest artifacts into persistent Chroma
+python ingest.py            # smart re-ingest (skips unchanged artifacts)
+python ingest.py --clear    # wipe + re-ingest from scratch
+
+# 3. Chat (CLI or Streamlit)
+python chat.py                                    # interactive REPL
+python chat.py --query "what is gross to net"     # single query
+streamlit run app.py                              # Streamlit demo UI
+```
+
+## Environment variables
+
+Copy `.env.example` to `.env`. Embeddings and chat can live on **different Azure
+resources** — each has its own endpoint/key/deployment vars.
+
+| Variable | Purpose |
+|---|---|
+| `AZURE_OPENAI_EMBEDDING_ENDPOINT` | Azure OpenAI endpoint for embeddings |
+| `AZURE_OPENAI_EMBEDDING_API_KEY` | API key for embeddings resource |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Deployment name (e.g. `ciathena-text-embedding-3-large`) |
+| `AZURE_OPENAI_EMBEDDING_API_VERSION` | Optional, defaults to `2024-02-01` |
+| `AZURE_OPENAI_CHAT_ENDPOINT` | Azure OpenAI endpoint for chat model |
+| `AZURE_OPENAI_CHAT_API_KEY` | API key for chat resource |
+| `AZURE_OPENAI_CHAT_DEPLOYMENT` | Deployment name (e.g. `gpt-4o`) |
+| `AZURE_OPENAI_CHAT_API_VERSION` | Optional, defaults to `2024-02-01` |
+| `AZURE_BLOB_CONNECTION_STRING` | Azure Blob Storage connection string (optional) |
+| `AZURE_BLOB_CONTAINER_NAME` | Blob container name (default `ciathena-artifacts`) |
+| `CHROMA_PERSIST_DIR` | Chroma storage path (default `./.chroma`) |
+| `RETRIEVAL_CANDIDATE_POOL` | Chunks retrieved before rerank (default `12`) |
+| `RETRIEVAL_TOP_K` | Chunks kept after rerank (default `4`) |
+
+With **no env vars set**, the pipeline runs offline using a deterministic fake
+embedder and a stubbed chat LLM — useful for wiring/smoke tests. Retrieval
+ordering and generated answers are only meaningful with real Azure deployments.
+
+> **Scenario B rule:** the embedding model used to ingest documents MUST equal
+> the model used to embed live queries at runtime. The model name is recorded
+> on every chunk and artifact envelope so a mismatch is detectable.
+
+## Agentic RAG flow
+
+```
+user_query
+    │
+    ▼
+1. ROUTER (LLM + routing catalog)
+   → in_domain? · usecase · component_type(s) · intent · rewritten_query
+    │
+    ▼
+2. RETRIEVE (persistent Chroma)
+   metadata pre-filter: usecase ∈ {chosen, General}   (OR-merge)
+                        review_status = "approved"     (governance)
+                        component_type ∈ chosen        (soft)
+    │
+    ▼
+3. RERANK / DOCUMENT-FILTER
+   cosine threshold + LLM relevance grading (uses rewritten query) → top-k
+    │
+    ▼
+4. GENERATE (LLM)
+   grounded answer + citations [artifact_id::chunk_id]
+   refuses when no approved context survives filtering
+```
+
+The router uses a **routing catalog** built at startup from artifact metadata
+(trigger patterns, disambiguation triggers, AI routing notes, synonyms, item
+names) — so the LLM routes with precision, not guesswork.
+
+## Storage architecture
+
+| Component | Stores | Purpose |
+|---|---|---|
+| **Azure Blob Storage** (optional) | Raw YAML artifact files | Shared cloud repository for team collaboration |
+| **ChromaDB** (local) | Vector embeddings + metadata | Similarity search to find relevant chunks |
+| **Azure OpenAI** | — | LLM for routing, grading, and answer generation |
+
+Without blob vars set, artifacts are loaded from the local `artifacts/` directory.
+
+## CLI commands
+
+### `ingest.py` — smart re-ingest with version tracking
+
+```bash
+python ingest.py                          # auto: blob if configured, else local
+python ingest.py --source blob            # force blob storage source
+python ingest.py --source local           # force local artifacts/ directory
+python ingest.py --artifacts-dir ./my_dir # custom local artifacts directory
+python ingest.py --clear                  # wipe everything and re-ingest from scratch
+```
+
+Smart re-ingestion compares each artifact's `content_version` field and file hash
+against the ingestion log (`.chroma/ingestion_log.json`). Unchanged artifacts are
+skipped, saving embedding cost.
+
+### `chat.py` — query the knowledge base
+
+```bash
+python chat.py                                          # interactive REPL
+python chat.py --query "what is gross to net"           # single query
+python chat.py -q "where should I move budget"          # short flag
+```
+
+### `demo.py` — retrieval-only demo (original)
+
+```bash
+python demo.py    # end-to-end: load → chunk → embed → ingest → retrieve
+```
+
+## Sample artifacts
+
+Three artifacts exercise different body shapes and cross-usecase filtering:
+
+| File | component_type | usecase | Chunks |
+|---|---|---|---|
+| `gen-concept-pharma-001.yml` | concept | General | TRx, NBRx, Gross-to-Net |
+| `mmm-methodology-core-001.yml` | methodology | MMM | adstock, saturation, model selection |
+| `mmm-playbook-roi-001.yml` | playbook | MMM | ROI by channel, saturation check |
+
+These are illustrative content for format validation, not approved knowledge.
+The field structure is fixed by the artifact standard; the data team replaces
+the values.
+
+## Integrate the retrieval node into your existing graph
+
+```python
+from ciathena_kb import (
+    load_artifacts, chunk_all, get_embedder,
+    KnowledgeStore, make_retrieval_node,
+)
+
+store = KnowledgeStore(get_embedder())
+store.ingest(chunk_all(load_artifacts("artifacts")))
+
+retrieval_node = make_retrieval_node(store)
+graph.add_node("retrieve", retrieval_node)
+```
+
+Or use the full agentic graph:
+
+```python
+from ciathena_kb import (
+    load_artifacts, get_embedder, get_chat_llm,
+    KnowledgeStore, build_agent_graph,
+)
+
+artifacts = load_artifacts("artifacts")
+store = KnowledgeStore(get_embedder())
+llm = get_chat_llm()
+graph = build_agent_graph(store=store, artifacts=artifacts, llm=llm)
+
+result = graph.invoke({"user_query": "what is gross to net"})
+print(result["answer"])
+```
+
+## Streamlit demo (`app.py`)
+
+```bash
+streamlit run app.py
+```
+
+Features:
+- **Chat interface** — ask questions, see answers with citations, routing details, and retrieved chunks
+- **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and ingests (to blob if configured, else local)
+- **Re-ingest all** — one-click wipe + re-ingest from the sidebar
+- **Ingestion log** — expandable entries showing version, type, layer, chunk count, hash, source (blob/local), timestamp
+- **Status panel** — shows embedder/LLM/blob connection status, model names, storage mode, chunk count
+- **Graceful error handling** — shows friendly message when Azure is temporarily unavailable instead of crashing
+
+## Artifact upload + versioning
+
+Teams can add new YAML artifacts at any time:
+
+1. **CLI**: drop `.yml` files into `artifacts/`, run `python ingest.py` — only new/changed files are embedded
+2. **Streamlit**: drag-drop files in the sidebar upload panel — validates, saves to blob (or local), auto-ingests
+3. **Blob storage**: when configured, all uploaded artifacts are stored in Azure Blob Storage for team-wide access
+
+The ingestion log (`.chroma/ingestion_log.json`) tracks every artifact's `content_version`,
+file content hash, chunk count, and embedding model. When you bump `content_version` in a
+YAML file (or change any content), re-running `ingest.py` detects the change and re-embeds
+only that artifact.
+
+## Resilience
+
+- **LLM retry logic**: transient Azure errors (500, 502, 503, 504, 429) are retried up to 3 times with exponential backoff (2s, 5s, 10s) before failing
+- **Graceful degradation**: no blob vars = local mode, no Azure creds = offline mode with fake embedder/LLM
+- **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
+
+## What this PoC covers (and does not)
+
+**Covers:** artifact parsing, validation, one-item-per-chunk chunking,
+embedding, persistent Chroma ingest, metadata pre-filtering (usecase +
+component_type + review_status), General-layer OR-merge, LLM query routing,
+LLM relevance grading, grounded answer generation with citations, graceful
+refusal on out-of-domain or no-context queries, smart re-ingestion with
+version tracking, Azure Blob Storage integration, LLM retry logic, and
+Streamlit demo UI with artifact upload.
+
+**Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
+encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
+are later phases per the PoC plan.

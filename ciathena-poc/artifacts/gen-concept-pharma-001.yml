@@ -1,0 +1,78 @@
+---
+artifact_id: gen-concept-pharma-001
+title: "Core Pharma Commercial Concepts"
+artifact_type: general_intelligence
+schema_version: 1.0
+content_version: 1.0
+usecase: General
+layer: general
+component_type: concept
+personas: []
+client_agnostic: true
+inherits_from: []
+depends_on: []
+owner: knowledge_engineering
+review_status: approved
+last_reviewed: 2026-05-27
+embedding_model: text-embedding-3-large
+---
+concepts:
+  - concept_id: trx
+    name: "TRx (Total Prescriptions)"
+    definition: |
+      TRx is the total count of prescriptions dispensed in a period,
+      including both new prescriptions and refills. It is the most common
+      volume outcome metric for mature brands in commercial analytics.
+    synonyms: [total prescriptions, total scripts, total rx]
+    what_it_is_not: |
+      - NOT NBRx, which counts only new-to-brand prescriptions.
+      - NOT revenue; TRx is a volume measure, not a financial one.
+    adjacent_concepts: [NRx, NBRx, market share]
+    disambiguation_triggers:
+      - what is trx
+      - total prescriptions definition
+      - difference between trx and nrx
+    ai_routing_note: |
+      Retrieve for prescription volume definitions. Route financial ROI
+      questions to net revenue concepts.
+    flags: []
+
+  - concept_id: nbrx
+    name: "NBRx (New-to-Brand Prescriptions)"
+    definition: |
+      NBRx counts prescriptions for patients new to a specific brand,
+      regardless of prior therapy. It is a leading indicator of brand
+      adoption and is often the preferred outcome metric for launch and
+      growth brands.
+    synonyms: [new to brand, new brand starts, nbrx]
+    what_it_is_not: |
+      - NOT total volume; NBRx is a subset focused on new adoption.
+      - NOT the same as NRx, which can include switches within therapy.
+    adjacent_concepts: [TRx, NRx, launch analytics]
+    disambiguation_triggers:
+      - what is nbrx
+      - new to brand prescriptions
+      - best metric for launch brand adoption
+    ai_routing_note: |
+      Retrieve for adoption and launch-performance questions.
+    flags: []
+
+  - concept_id: gross_to_net
+    name: "Gross-to-Net (GTN)"
+    definition: |
+      Gross-to-net is the set of deductions between a drug's list (gross)
+      price and the manufacturer's realized (net) revenue, including
+      rebates, chargebacks, government discounts, copay support, and GPO
+      fees. Financial ROI should use net, not gross, revenue.
+    synonyms: [gtn, gross to net, net revenue adjustments]
+    what_it_is_not: |
+      - NOT a single discount; it is the aggregate of many deductions.
+      - NOT relevant to volume metrics like TRx.
+    adjacent_concepts: [net revenue, rebates, ROI]
+    disambiguation_triggers:
+      - what is gross to net
+      - why use net revenue for roi
+      - gtn deductions
+    ai_routing_note: |
+      Retrieve when ROI, net revenue, or pricing economics are discussed.
+    flags: []

@@ -1,0 +1,67 @@
+---
+artifact_id: mmm-playbook-roi-001
+title: "MMM ROI / Budget Reallocation Playbook"
+artifact_type: client_facing_playbook
+schema_version: 1.0
+content_version: 1.0
+usecase: MMM
+layer: client_facing
+component_type: playbook
+personas: [brand_manager, sme]
+client_agnostic: true
+inherits_from: [gen-concept-pharma-001]
+depends_on: []
+owner: insights_design
+review_status: approved
+last_reviewed: 2026-05-27
+embedding_model: text-embedding-3-large
+---
+scenarios:
+  - scenario_id: roi_by_channel
+    trigger_patterns:
+      - "what is the ROI of the field force"
+      - "which channel gives the best return"
+      - "where should I move budget next quarter"
+    personas: [brand_manager]
+    primary_analysis: |
+      Return marginal ROI by channel (forward-looking), not average ROI,
+      because marginal ROI is what should drive reallocation.
+    correlated_metrics:
+      - saturation_level
+      - spend_share_vs_effect_share
+      - payer_access_modifier
+    analysis_logic: |
+      Compare marginal ROI across channels; flag channels past saturation;
+      note where payer access suppresses promotion response; surface the top
+      reallocation candidates with uncertainty ranges.
+    visualization:
+      recommended: bar_chart
+      rationale: "ranked categorical comparison of marginal ROI"
+      alt: tornado_chart
+    narrative_template: |
+      Lead with the reallocation implication in dollars and share points,
+      state the uncertainty, and name the one channel to act on first.
+    persona_overrides:
+      field_rep: "translate to which segments or accounts to prioritize"
+
+  - scenario_id: spend_saturation_check
+    trigger_patterns:
+      - "are we overspending on digital"
+      - "is this channel saturated"
+      - "can we productively spend more on speaker programs"
+    personas: [brand_manager, sme]
+    primary_analysis: |
+      Evaluate the channel's position on its saturation curve and the
+      marginal return at current spend.
+    correlated_metrics:
+      - marginal_roi
+      - response_curve_slope
+    analysis_logic: |
+      Locate current spend on the response curve; if near the flat region,
+      flag diminishing returns and quantify the wasted marginal spend.
+    visualization:
+      recommended: line_chart
+      rationale: "response curve is a continuous spend-to-effect relationship"
+    narrative_template: |
+      State whether the channel is saturated, the spend level where returns
+      flatten, and the recommended ceiling.
