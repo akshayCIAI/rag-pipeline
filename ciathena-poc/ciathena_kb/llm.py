@@ -51,10 +51,16 @@ class AzureChatLLM:
         )
 
     def _call_with_retry(self, **create_kwargs: Any) -> Any:
-        from openai import APIStatusError
+        from openai import APIStatusError, BadRequestError
         for attempt in range(MAX_RETRIES):
             try:
                 return self._client.chat.completions.create(**create_kwargs)
+            except BadRequestError as e:
+                if "temperature" in str(e) and "temperature" in create_kwargs:
+                    print(f"  [llm] Model does not support temperature param, retrying without it...")
+                    create_kwargs.pop("temperature", None)
+                    return self._client.chat.completions.create(**create_kwargs)
+                raise
             except APIStatusError as e:
                 if e.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES - 1:
                     wait = RETRY_BACKOFF[attempt]
