@@ -106,6 +106,8 @@ def load_and_ensure_ingested():
     log = get_log()
     pm = get_prompt_manager()
 
+    skipped_files: list[tuple[str, str]] = []
+
     if blob:
         blob_names = blob.list_artifacts()
         artifacts = []
@@ -116,7 +118,13 @@ def load_and_ensure_ingested():
         for name in blob_names:
             data = blob.download(name)
             uri = f"blob://{blob.container_name}/artifacts/{name}"
-            artifact = load_artifact_from_bytes(data, source_name=uri)
+            try:
+                artifact = load_artifact_from_bytes(data, source_name=uri)
+            except ArtifactError as e:
+                print(f"  Skipping {name}: {e}")
+                skipped_files.append((name, str(e)))
+                continue
+
             artifacts.append(artifact)
 
             ingested, n_chunks = _smart_ingest_artifact(
@@ -141,6 +149,8 @@ def load_and_ensure_ingested():
                 if chunks:
                     store.ingest(chunks)
                 log.record(a, chunk_count=len(chunks), embedding_model=embedder.model_name)
+
+    st.session_state.skipped_artifacts = skipped_files
 
     prompts = {key: pm.get(key) for key in pm.all_keys}
     llm = get_llm_cached()
@@ -271,13 +281,18 @@ with st.sidebar:
         store.clear()
         log.clear()
 
+        reingest_skipped = []
         if blob:
             blob_names = blob.list_artifacts()
             fresh_artifacts = []
             for name in blob_names:
                 data = blob.download(name)
                 uri = f"blob://{blob.container_name}/artifacts/{name}"
-                a = load_artifact_from_bytes(data, source_name=uri)
+                try:
+                    a = load_artifact_from_bytes(data, source_name=uri)
+                except ArtifactError as e:
+                    reingest_skipped.append((name, str(e)))
+                    continue
                 fresh_artifacts.append(a)
                 chunks = chunk_artifact(a)
                 if chunks:
@@ -292,8 +307,11 @@ with st.sidebar:
                     store.ingest(chunks)
                 log.record(a, chunk_count=len(chunks), embedding_model=embedder.model_name)
 
+        st.session_state.skipped_artifacts = reingest_skipped
         src = "blob" if blob else "local"
         st.success(f"Re-ingested {len(fresh_artifacts)} artifacts ({store.count()} chunks) from {src}", icon="🔄")
+        if reingest_skipped:
+            st.warning(f"Skipped {len(reingest_skipped)} invalid file(s) — see sidebar for details.", icon="⚠️")
         st.cache_resource.clear()
         st.rerun()
 
@@ -320,6 +338,16 @@ with st.sidebar:
                 st.markdown(f"**File hash:** `{entry.get('file_hash', '')}`")
     else:
         st.caption("No artifacts ingested yet.")
+
+    # ---- SKIPPED FILES ----
+    skipped = st.session_state.get("skipped_artifacts", [])
+    if skipped:
+        st.divider()
+        st.subheader("Skipped Files")
+        st.caption(f"{len(skipped)} file(s) failed validation and were not ingested.")
+        for fname, reason in skipped:
+            with st.expander(f"⚠️ {fname}"):
+                st.markdown(f"**Reason:** {reason}")
 
     st.divider()
 

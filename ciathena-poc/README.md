@@ -271,6 +271,7 @@ built-in defaults when no blob copy exists.
 - **LLM retry logic**: transient Azure errors (500, 502, 503, 504, 429) are retried up to 3 times with exponential backoff (2s, 5s, 10s) before failing
 - **Graceful degradation**: no blob vars = local mode, no Azure creds = offline mode with fake embedder/LLM
 - **ChromaDB fallback**: `PersistentClient` is used locally; on Streamlit Cloud (detected via `/mount/src` or `STREAMLIT_SHARING_MODE`), uses in-memory `chromadb.Client()` directly to avoid Rust-binding initialization failures
+- **Artifact validation**: invalid YAML files (wrong `component_type`, missing fields, etc.) are skipped with a warning instead of crashing the app; skipped files shown in the sidebar
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
 
 ## What this PoC covers (and does not)

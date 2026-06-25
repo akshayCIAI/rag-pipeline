@@ -22,6 +22,7 @@ load_dotenv()
 from ciathena_kb import (
     load_artifacts, load_artifact_from_bytes, chunk_artifact,
     get_embedder, KnowledgeStore, IngestionLog, get_blob_client,
+    ArtifactError,
 )
 from ciathena_kb.ingestion_log import _bytes_hash
 
@@ -34,7 +35,11 @@ def _load_from_blob(blob):
     for name in blob_names:
         data = blob.download(name)
         uri = f"blob://{blob.container_name}/artifacts/{name}"
-        artifact = load_artifact_from_bytes(data, source_name=uri)
+        try:
+            artifact = load_artifact_from_bytes(data, source_name=uri)
+        except ArtifactError as e:
+            print(f"  SKIP  {name}: {e}")
+            continue
         artifacts.append(artifact)
         hashes[artifact.artifact_id] = _bytes_hash(data)
     return artifacts, hashes
