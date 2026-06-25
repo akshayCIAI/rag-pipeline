@@ -43,9 +43,15 @@ class KnowledgeStore:
         if len(name) < 3:
             name = f"col_{name}"
         resolved_dir = persist_dir or os.environ.get("CHROMA_PERSIST_DIR", DEFAULT_PERSIST_DIR)
-        try:
-            self._client = chromadb.PersistentClient(path=resolved_dir)
-        except Exception:
+        use_persistent = True
+        if os.environ.get("STREAMLIT_SHARING_MODE") or os.path.exists("/mount/src"):
+            use_persistent = False
+        if use_persistent:
+            try:
+                self._client = chromadb.PersistentClient(path=resolved_dir)
+            except Exception:
+                self._client = chromadb.Client()
+        else:
             self._client = chromadb.Client()
         self._col = self._client.get_or_create_collection(
             name=name, metadata={"hnsw:space": "cosine"})

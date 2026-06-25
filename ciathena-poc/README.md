@@ -231,7 +231,7 @@ only that artifact.
 
 - **LLM retry logic**: transient Azure errors (500, 502, 503, 504, 429) are retried up to 3 times with exponential backoff (2s, 5s, 10s) before failing
 - **Graceful degradation**: no blob vars = local mode, no Azure creds = offline mode with fake embedder/LLM
-- **ChromaDB fallback**: `PersistentClient` is used by default for local persistence; falls back to in-memory `chromadb.Client()` on platforms where SQLite/persistent storage is restricted (e.g. Streamlit Cloud)
+- **ChromaDB fallback**: `PersistentClient` is used locally; on Streamlit Cloud (detected via `/mount/src` or `STREAMLIT_SHARING_MODE`), uses in-memory `chromadb.Client()` directly to avoid Rust-binding initialization failures
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
 
 ## What this PoC covers (and does not)
