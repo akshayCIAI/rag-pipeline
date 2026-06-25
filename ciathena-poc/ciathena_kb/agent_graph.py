@@ -40,6 +40,7 @@ def build_agent_graph(
     llm: ChatLLM | None = None,
     candidate_pool: int | None = None,
     top_k: int | None = None,
+    prompts: dict[str, str] | None = None,
 ):
     """Build and compile the full agentic RAG graph."""
     if llm is None:
@@ -47,13 +48,14 @@ def build_agent_graph(
 
     pool = candidate_pool or int(os.environ.get("RETRIEVAL_CANDIDATE_POOL", "12"))
     k = top_k or int(os.environ.get("RETRIEVAL_TOP_K", "4"))
+    p = prompts or {}
 
     catalog = build_routing_catalog(artifacts)
 
-    router = make_router_node(llm, catalog)
+    router = make_router_node(llm, catalog, system_prompt=p.get("router_system"))
     retriever = make_retrieval_node(store, candidate_pool=pool)
-    reranker = make_rerank_node(llm, top_k=k)
-    generator = make_generate_node(llm)
+    reranker = make_rerank_node(llm, top_k=k, system_prompt=p.get("rerank_grading"))
+    generator = make_generate_node(llm, system_prompt=p.get("generate_system"))
 
     decline_node = lambda state: {
         "answer": (

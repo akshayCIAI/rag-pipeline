@@ -27,11 +27,12 @@ ciathena-poc/
     generate_node.py        # grounded answer generation with citations
     agent_graph.py          # assembles the full LangGraph: route → retrieve → rerank → generate
     ingestion_log.py        # version-aware ingestion tracking (skip unchanged artifacts)
-    blob_client.py          # Azure Blob Storage client for artifact files (optional)
+    blob_client.py          # Azure Blob Storage client for artifacts + prompts (optional, versioned)
+    prompt_manager.py       # prompt template manager (blob-backed with built-in defaults)
   artifacts/                # 3 sample artifacts (concept, methodology, playbook)
   ingest.py                 # CLI: smart re-ingest + blob/local source + --clear flag
   chat.py                   # CLI: interactive or single-query agentic Q&A
-  app.py                    # Streamlit demo: chat + upload + blob storage + ingestion log
+  app.py                    # Streamlit demo: chat + upload + prompt editor + ingestion log
   demo.py                   # original retrieval-only end-to-end runner
   .env.example              # env var template — copy to .env
   requirements.txt
@@ -118,7 +119,7 @@ names) — so the LLM routes with precision, not guesswork.
 
 | Component | Stores | Purpose |
 |---|---|---|
-| **Azure Blob Storage** (optional) | Raw YAML artifact files | Shared cloud repository for team collaboration |
+| **Azure Blob Storage** (optional) | YAML artifacts (versioned) + prompt templates | Shared cloud repository with timestamp-based version history |
 | **ChromaDB** (local) | Vector embeddings + metadata | Similarity search to find relevant chunks |
 | **Azure OpenAI** | — | LLM for routing, grading, and answer generation |
 
@@ -208,8 +209,10 @@ streamlit run app.py
 
 Features:
 - **Chat interface** — ask questions, see answers with citations, routing details, and retrieved chunks
-- **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and ingests (to blob if configured, else local)
+- **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
+- **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
+- **Prompt management** — edit router, rerank, and generate prompts directly in the sidebar; saves to blob so changes persist without redeploying
 - **Ingestion log** — expandable entries showing version, type, layer, chunk count, hash, source (blob/local), timestamp
 - **Status panel** — shows embedder/LLM/blob connection status, model names, storage mode, chunk count
 - **Graceful error handling** — shows friendly message when Azure is temporarily unavailable instead of crashing
@@ -219,13 +222,49 @@ Features:
 Teams can add new YAML artifacts at any time:
 
 1. **CLI**: drop `.yml` files into `artifacts/`, run `python ingest.py` — only new/changed files are embedded
-2. **Streamlit**: drag-drop files in the sidebar upload panel — validates, saves to blob (or local), auto-ingests
+2. **Streamlit**: drag-drop files in the sidebar upload panel — validates, saves to blob (or local), smart-ingests (skips unchanged)
 3. **Blob storage**: when configured, all uploaded artifacts are stored in Azure Blob Storage for team-wide access
 
+### Blob storage layout
+
+```
+ciathena-artifacts/           # container
+  artifacts/                  # current versions (used for ingestion)
+    gen-concept-pharma-001.yml
+    mmm-methodology-core-001.yml
+  versions/                   # timestamped snapshots (audit trail)
+    gen-concept-pharma-001.yml/
+      20260625_043000_gen-concept-pharma-001.yml
+      20260625_091500_gen-concept-pharma-001.yml
+    mmm-methodology-core-001.yml/
+      20260625_043000_mmm-methodology-core-001.yml
+  prompts/                    # editable prompt templates
+    router_system.txt
+    rerank_grading.txt
+    generate_system.txt
+```
+
+Every upload saves the file under `artifacts/` (the "current" copy used for ingestion) and
+also creates a timestamped snapshot under `versions/<filename>/` for audit trail.
+
+### Smart re-ingestion
+
 The ingestion log (`.chroma/ingestion_log.json`) tracks every artifact's `content_version`,
-file content hash, chunk count, and embedding model. When you bump `content_version` in a
-YAML file (or change any content), re-running `ingest.py` detects the change and re-embeds
-only that artifact.
+file content hash, chunk count, and embedding model. On startup and on upload, the pipeline
+compares hashes — only new or changed artifacts are embedded, saving Azure OpenAI cost.
+
+## Prompt management
+
+Pipeline prompts (router, rerank, generate) can be edited in the Streamlit sidebar without
+code changes or redeployment:
+
+1. Open the **Prompt Management** section in the sidebar
+2. Edit the prompt text in the text area
+3. Click **Save** — the prompt is stored in blob and used immediately
+4. Click **Reset to default** to restore the built-in prompt
+
+When blob is not configured, edits apply to the current session only. Prompts fall back to
+built-in defaults when no blob copy exists.
 
 ## Resilience
 
@@ -241,8 +280,9 @@ embedding, persistent Chroma ingest, metadata pre-filtering (usecase +
 component_type + review_status), General-layer OR-merge, LLM query routing,
 LLM relevance grading, grounded answer generation with citations, graceful
 refusal on out-of-domain or no-context queries, smart re-ingestion with
-version tracking, Azure Blob Storage integration, LLM retry logic, and
-Streamlit demo UI with artifact upload.
+version tracking, Azure Blob Storage integration (versioned artifacts +
+prompt templates), auto-ingest on startup, LLM retry logic, blob-backed
+prompt management, and Streamlit demo UI with artifact upload and prompt editor.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those

@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-import shutil
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 if sys.stdout.encoding != "utf-8":
@@ -35,6 +34,7 @@ from ciathena_kb import (
     IngestionLog,
     ArtifactError,
     get_blob_client,
+    PromptManager,
 )
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
@@ -76,32 +76,75 @@ def get_blob():
     return st.session_state.blob_client
 
 
+def get_prompt_manager():
+    if "prompt_manager" not in st.session_state:
+        st.session_state.prompt_manager = PromptManager(blob_client=get_blob())
+    return st.session_state.prompt_manager
+
+
+def _smart_ingest_artifact(artifact, data_bytes, store, log, embedder, file_hash=None):
+    """Ingest a single artifact only if it changed. Returns (ingested: bool, chunks: int)."""
+    content_hash = file_hash or (_bytes_hash(data_bytes) if data_bytes else None)
+    needs, reason = log.needs_reingest(artifact, current_hash=content_hash)
+
+    if not needs:
+        return False, 0
+
+    chunks = chunk_artifact(artifact)
+    if chunks:
+        store.ingest(chunks)
+    log.record(artifact, chunk_count=len(chunks),
+               embedding_model=embedder.model_name, file_hash=content_hash)
+    return True, len(chunks)
+
+
 def load_and_ensure_ingested():
-    """Load artifacts and ensure they're ingested. Returns (artifacts, graph)."""
+    """Load artifacts from blob/local and smart-ingest on startup."""
     blob = get_blob()
     embedder = get_embedder_cached()
     store = get_store_cached()
     log = get_log()
+    pm = get_prompt_manager()
 
     if blob:
         blob_names = blob.list_artifacts()
         artifacts = []
+        ingested_count = 0
+        skipped_count = 0
+        total_chunks = 0
+
         for name in blob_names:
             data = blob.download(name)
-            uri = f"blob://{blob.container_name}/{name}"
-            artifacts.append(load_artifact_from_bytes(data, source_name=uri))
+            uri = f"blob://{blob.container_name}/artifacts/{name}"
+            artifact = load_artifact_from_bytes(data, source_name=uri)
+            artifacts.append(artifact)
+
+            ingested, n_chunks = _smart_ingest_artifact(
+                artifact, data, store, log, embedder,
+                file_hash=_bytes_hash(data),
+            )
+            if ingested:
+                ingested_count += 1
+                total_chunks += n_chunks
+            else:
+                skipped_count += 1
+
+        if ingested_count > 0:
+            print(f"  Auto-ingest: {ingested_count} new/changed, {skipped_count} unchanged, {total_chunks} chunks embedded")
+        elif blob_names:
+            print(f"  Auto-ingest: all {skipped_count} artifacts unchanged, 0 embeddings needed")
     else:
         artifacts = load_artifacts(ARTIFACTS_DIR)
+        if store.count() == 0:
+            for a in artifacts:
+                chunks = chunk_artifact(a)
+                if chunks:
+                    store.ingest(chunks)
+                log.record(a, chunk_count=len(chunks), embedding_model=embedder.model_name)
 
-    if store.count() == 0:
-        for a in artifacts:
-            chunks = chunk_artifact(a)
-            if chunks:
-                store.ingest(chunks)
-            log.record(a, chunk_count=len(chunks), embedding_model=embedder.model_name)
-
+    prompts = {key: pm.get(key) for key in pm.all_keys}
     llm = get_llm_cached()
-    graph = build_agent_graph(store=store, artifacts=artifacts, llm=llm)
+    graph = build_agent_graph(store=store, artifacts=artifacts, llm=llm, prompts=prompts)
     return artifacts, graph
 
 
@@ -123,6 +166,7 @@ store = get_store_cached()
 llm = get_llm_cached()
 log = get_log()
 blob = get_blob()
+pm = get_prompt_manager()
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -180,27 +224,37 @@ with st.sidebar:
                     blob_uri = blob.upload(uf.name, raw_bytes)
                     artifact = load_artifact_from_bytes(raw_bytes, source_name=blob_uri)
                     content_hash = _bytes_hash(raw_bytes)
-                    # also keep a local cache copy
-                    local_dest = ARTIFACTS_DIR / uf.name
-                    local_dest.write_bytes(raw_bytes)
                 else:
                     dest = ARTIFACTS_DIR / uf.name
                     dest.write_bytes(raw_bytes)
                     artifact = load_artifact(dest)
                     content_hash = None
 
-                chunks = chunk_artifact(artifact)
-                if chunks:
-                    store.ingest(chunks)
-                log.record(artifact, chunk_count=len(chunks),
-                           embedding_model=embedder.model_name, file_hash=content_hash)
-
-                storage_label = "blob + Chroma" if blob else "Chroma"
-                st.success(
-                    f"**{artifact.artifact_id}** v{artifact.envelope.get('content_version', '?')} "
-                    f"— {len(chunks)} chunks ingested ({storage_label})",
-                    icon="✅",
+                ingested, n_chunks = _smart_ingest_artifact(
+                    artifact, raw_bytes, store, log, embedder,
+                    file_hash=content_hash,
                 )
+
+                version = artifact.envelope.get("content_version", "?")
+                storage_label = "blob + Chroma" if blob else "Chroma"
+                if ingested:
+                    st.success(
+                        f"**{artifact.artifact_id}** v{version} "
+                        f"— {n_chunks} chunks ingested ({storage_label})",
+                        icon="✅",
+                    )
+                else:
+                    st.info(
+                        f"**{artifact.artifact_id}** v{version} "
+                        f"— unchanged, skipped embedding ({storage_label})",
+                        icon="ℹ️",
+                    )
+
+                if blob:
+                    versions = blob.list_versions(uf.name)
+                    if versions:
+                        st.caption(f"  Version history: {len(versions)} snapshot(s)")
+
             except ArtifactError as e:
                 st.error(f"**Validation failed:** {e}", icon="❌")
                 if not blob:
@@ -222,7 +276,7 @@ with st.sidebar:
             fresh_artifacts = []
             for name in blob_names:
                 data = blob.download(name)
-                uri = f"blob://{blob.container_name}/{name}"
+                uri = f"blob://{blob.container_name}/artifacts/{name}"
                 a = load_artifact_from_bytes(data, source_name=uri)
                 fresh_artifacts.append(a)
                 chunks = chunk_artifact(a)
@@ -266,6 +320,40 @@ with st.sidebar:
                 st.markdown(f"**File hash:** `{entry.get('file_hash', '')}`")
     else:
         st.caption("No artifacts ingested yet.")
+
+    st.divider()
+
+    # ---- PROMPT MANAGEMENT ----
+    st.subheader("Prompt Management")
+    if blob:
+        st.caption("Prompts stored in Azure Blob — edit and save without redeploying.")
+    else:
+        st.caption("Blob not configured — edits apply to current session only.")
+
+    for key in pm.all_keys:
+        with st.expander(f"📝 {pm.label_for(key)}"):
+            current_val = pm.get(key)
+            default_val = pm.default_for(key)
+            edited = st.text_area(
+                f"Edit {pm.label_for(key)}",
+                value=current_val,
+                height=200,
+                key=f"prompt_{key}",
+                label_visibility="collapsed",
+            )
+            col_save, col_reset = st.columns(2)
+            with col_save:
+                if st.button("Save", key=f"save_{key}", use_container_width=True):
+                    pm.save(key, edited)
+                    st.success("Saved! Pipeline will use the updated prompt.", icon="✅")
+                    st.cache_resource.clear()
+                    st.rerun()
+            with col_reset:
+                if st.button("Reset to default", key=f"reset_{key}", use_container_width=True):
+                    pm.save(key, default_val)
+                    st.success("Reset to default.", icon="🔄")
+                    st.cache_resource.clear()
+                    st.rerun()
 
     st.divider()
 

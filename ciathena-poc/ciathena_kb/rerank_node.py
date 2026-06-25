@@ -12,28 +12,17 @@ from typing import Any, Callable
 
 from .llm import ChatLLM, FakeChatLLM
 
-GRADE_SYSTEM_PROMPT = """\
-You are a relevance grader for a pharma commercial analytics knowledge base.
-Given a user question and a retrieved chunk, decide if the chunk is relevant
-to answering the question.
+from .prompt_manager import DEFAULT_PROMPTS
 
-Be GENEROUS with relevance:
-- If the question is broad (e.g. "what is MMM"), any chunk that describes a
-  component, step, or aspect of that topic IS relevant.
-- A chunk does not need to directly define the term — if it explains part of
-  the methodology, a use case, or a related concept, mark it relevant.
-- Only mark irrelevant if the chunk is truly about a different, unrelated topic.
-
-Respond ONLY with valid JSON (no markdown):
-{{"relevant": true/false, "reason": "one-line explanation"}}
-"""
+GRADE_SYSTEM_PROMPT = DEFAULT_PROMPTS["rerank_grading"]
 
 COSINE_THRESHOLD = 0.15
 
 
-def make_rerank_node(llm: ChatLLM, top_k: int = 4) -> Callable:
+def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = None) -> Callable:
     """Return a LangGraph node that reranks/filters retrieved chunks."""
     use_llm_grading = not isinstance(llm, FakeChatLLM)
+    grade_prompt = system_prompt or GRADE_SYSTEM_PROMPT
 
     def rerank_node(state: dict[str, Any]) -> dict[str, Any]:
         route = state.get("route", {})
@@ -51,7 +40,7 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4) -> Callable:
             graded: list[dict[str, Any]] = []
             for chunk in above_threshold[:top_k * 2]:
                 messages = [
-                    {"role": "system", "content": GRADE_SYSTEM_PROMPT},
+                    {"role": "system", "content": grade_prompt},
                     {"role": "user", "content": (
                         f"Question: {grading_query}\n\n"
                         f"Chunk ({chunk.get('component_type', '')} / "

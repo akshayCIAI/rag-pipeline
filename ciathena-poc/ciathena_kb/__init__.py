@@ -12,6 +12,7 @@ from .generate_node import make_generate_node
 from .agent_graph import build_agent_graph
 from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
+from .prompt_manager import PromptManager
 
 __all__ = [
     "Artifact", "load_artifact", "load_artifact_from_bytes", "load_artifacts", "ArtifactError",
@@ -25,4 +26,5 @@ __all__ = [
     "build_agent_graph",
     "IngestionLog",
     "ArtifactBlobClient", "get_blob_client",
+    "PromptManager",
 ]

@@ -57,12 +57,13 @@ Supporting modules under `ciathena_kb/`:
 - **`llm.py`** — `AzureChatLLM` (default `gpt-4o`) with a `FakeChatLLM` fallback. Uses per-service env vars (`AZURE_OPENAI_CHAT_*`). Includes **retry logic** (3 attempts, exponential backoff) for transient Azure errors (500, 502, 503, 504, 429).
 - **`store.py`** — Chroma vector store wrapper. **Metadata filters are applied BEFORE vector search** (pre-filtering). Supports General OR-merge (always retrieves General-layer alongside usecase-specific chunks) and governance gate (`review_status="approved"`). Detects Streamlit Cloud (`/mount/src` or `STREAMLIT_SHARING_MODE`) and uses in-memory `chromadb.Client()` directly; locally falls back to in-memory if `PersistentClient` fails.
 - **`catalog.py`** — builds a routing catalog from artifact metadata (trigger_patterns, disambiguation_triggers, synonyms, item names) for injection into the router prompt.
-- **`router_node.py`** — LLM-powered query router. Analyzes user question against the routing catalog and outputs `{in_domain, usecase, component_types, intent, rewritten_query}`. Generous with `in_domain` — only marks false for clearly unrelated topics.
+- **`router_node.py`** — LLM-powered query router. Analyzes user question against the routing catalog and outputs `{in_domain, usecase, component_types, intent, rewritten_query}`. Generous with `in_domain` — only marks false for clearly unrelated topics. Accepts optional `system_prompt` override from `PromptManager`.
 - **`retrieval_node.py`** — LangGraph retrieval node. Reads from `route` dict (agentic flow) or top-level state keys (backward compat for `demo.py`).
-- **`rerank_node.py`** — post-retrieval filtering: cosine threshold + LLM relevance grading. Uses the **rewritten query** (not raw) for grading. Generous grading for broad questions.
-- **`generate_node.py`** — grounded answer generation with `[artifact_id::chunk_id]` citations. Refuses when no approved context survives filtering.
-- **`agent_graph.py`** — assembles the full LangGraph with conditional edge (in_domain check).
-- **`blob_client.py`** — Azure Blob Storage client for artifact YAML files. `get_blob_client()` returns None when env vars missing (opt-in, same pattern as embedder). Supports upload, download, list, exists, delete.
+- **`rerank_node.py`** — post-retrieval filtering: cosine threshold + LLM relevance grading. Uses the **rewritten query** (not raw) for grading. Generous grading for broad questions. Accepts optional `system_prompt` override.
+- **`generate_node.py`** — grounded answer generation with `[artifact_id::chunk_id]` citations. Refuses when no approved context survives filtering. Accepts optional `system_prompt` override.
+- **`agent_graph.py`** — assembles the full LangGraph with conditional edge (in_domain check). Accepts optional `prompts` dict to pass prompt overrides to all nodes.
+- **`blob_client.py`** — Azure Blob Storage client for artifact YAML files and prompt templates. `get_blob_client()` returns None when env vars missing (opt-in, same pattern as embedder). Artifacts stored under `artifacts/` prefix with timestamped version snapshots under `versions/`. Prompts stored under `prompts/` prefix.
+- **`prompt_manager.py`** — manages pipeline prompt templates (router, rerank, generate). Loads from blob when available, falls back to built-in defaults. Prompts editable via Streamlit UI without redeploying.
 - **`ingestion_log.py`** — tracks ingested artifacts in `.chroma/ingestion_log.json`. Smart re-ingestion: compares `content_version` + file hash (supports both local files and blob URIs via `_bytes_hash`).
 
 ### The artifact contract (most important domain concept)

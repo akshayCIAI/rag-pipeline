@@ -33,7 +33,7 @@ def _load_from_blob(blob):
     hashes = {}
     for name in blob_names:
         data = blob.download(name)
-        uri = f"blob://{blob.container_name}/{name}"
+        uri = f"blob://{blob.container_name}/artifacts/{name}"
         artifact = load_artifact_from_bytes(data, source_name=uri)
         artifacts.append(artifact)
         hashes[artifact.artifact_id] = _bytes_hash(data)

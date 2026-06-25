@@ -11,30 +11,9 @@ from typing import Any, Callable
 
 from .llm import ChatLLM
 
-GENERATE_SYSTEM_PROMPT = """\
-You are ciATHENA, a domain intelligence agent for pharma life-sciences
-commercial analytics. Generate a clear, accurate answer GROUNDED ONLY in the
-provided knowledge chunks.
+from .prompt_manager import DEFAULT_PROMPTS
 
-RULES:
-1. Use ONLY information from the chunks below. Do NOT hallucinate or add
-   information not present in the chunks.
-2. Cite every claim with [artifact_id::chunk_item_id] at the end of the
-   sentence or paragraph. The chunk_id contains both parts joined by "::".
-3. If the chunks do not contain enough information to answer the question,
-   say so explicitly — do NOT guess.
-4. Match the response depth to the intent:
-   - definition: concise explanation of what it is (and what it is NOT)
-   - how-to: step-by-step guidance with context from methodology chunks
-   - advisory: actionable recommendation grounded in playbook logic
-   - comparison: structured comparison with differences highlighted
-5. Keep answers focused and structured. Use bullet points for lists.
-
-USER INTENT: {intent}
-
-KNOWLEDGE CHUNKS:
-{chunks}
-"""
+GENERATE_SYSTEM_PROMPT = DEFAULT_PROMPTS["generate_system"]
 
 NO_CONTEXT_RESPONSE = (
     "I don't have approved knowledge artifacts covering this topic. "
@@ -55,8 +34,9 @@ def _format_chunks(chunks: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
-def make_generate_node(llm: ChatLLM) -> Callable:
+def make_generate_node(llm: ChatLLM, system_prompt: str | None = None) -> Callable:
     """Return a LangGraph node that generates a grounded answer."""
+    gen_prompt = system_prompt or GENERATE_SYSTEM_PROMPT
 
     def generate_node(state: dict[str, Any]) -> dict[str, Any]:
         route = state.get("route", {})
@@ -73,7 +53,7 @@ def make_generate_node(llm: ChatLLM) -> Callable:
         chunks_text = _format_chunks(graded)
 
         messages = [
-            {"role": "system", "content": GENERATE_SYSTEM_PROMPT.format(
+            {"role": "system", "content": gen_prompt.format(
                 intent=intent, chunks=chunks_text)},
             {"role": "user", "content": user_query},
         ]
