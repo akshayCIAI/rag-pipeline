@@ -27,9 +27,16 @@ def _collect(items: list[dict[str, Any]], field: str) -> list[str]:
     return out
 
 
-def build_routing_catalog(artifacts: list[Artifact]) -> str:
+MAX_COVERS_COMPACT = 5
+
+
+def build_routing_catalog(artifacts: list[Artifact], compact: bool = True) -> str:
     """Return a structured text block describing the available knowledge corpus,
-    suitable for injection into the router system prompt."""
+    suitable for injection into the router system prompt.
+
+    When compact=True (default), merges synonyms into trigger_patterns,
+    truncates covers lists, and omits empty fields to reduce token count.
+    """
     usecases: set[str] = set()
     component_types: set[str] = set()
     entries: list[str] = []
@@ -54,20 +61,31 @@ def build_routing_catalog(artifacts: list[Artifact]) -> str:
                       or _collect(items, "phase") or _collect(items, "scenario_id"))
 
         entry = f"- artifact: {a.artifact_id}\n"
-        entry += f"  title: {a.envelope.get('title', '')}\n"
-        entry += f"  usecase: {uc}\n"
-        entry += f"  component_type: {ct}\n"
-        entry += f"  layer: {a.envelope.get('layer', '')}\n"
-        if item_names:
-            entry += f"  covers: {item_names}\n"
-        if triggers:
-            entry += f"  trigger_patterns: {triggers}\n"
-        if disambig:
-            entry += f"  disambiguation_triggers: {disambig}\n"
-        if routing_notes:
-            entry += f"  routing_notes: {routing_notes}\n"
-        if synonyms:
-            entry += f"  synonyms: {synonyms}\n"
+        entry += f"  usecase: {uc} | type: {ct}\n"
+
+        if compact:
+            if item_names:
+                names = item_names[:MAX_COVERS_COMPACT]
+                suffix = f" (+{len(item_names) - MAX_COVERS_COMPACT})" if len(item_names) > MAX_COVERS_COMPACT else ""
+                entry += f"  covers: {names}{suffix}\n"
+            all_triggers = triggers + synonyms + disambig
+            if all_triggers:
+                entry += f"  triggers: {all_triggers}\n"
+            if routing_notes:
+                entry += f"  notes: {routing_notes}\n"
+        else:
+            entry += f"  title: {a.envelope.get('title', '')}\n"
+            entry += f"  layer: {a.envelope.get('layer', '')}\n"
+            if item_names:
+                entry += f"  covers: {item_names}\n"
+            if triggers:
+                entry += f"  trigger_patterns: {triggers}\n"
+            if disambig:
+                entry += f"  disambiguation_triggers: {disambig}\n"
+            if routing_notes:
+                entry += f"  routing_notes: {routing_notes}\n"
+            if synonyms:
+                entry += f"  synonyms: {synonyms}\n"
 
         entries.append(entry)
 
@@ -75,7 +93,6 @@ def build_routing_catalog(artifacts: list[Artifact]) -> str:
         "AVAILABLE KNOWLEDGE CORPUS\n"
         f"Usecases: {sorted(usecases)}\n"
         f"Component types: {sorted(component_types)}\n"
-        f"Total artifacts: {len(artifacts)}\n\n"
-        "ARTIFACT DETAILS:\n"
+        f"Artifacts: {len(artifacts)}\n\n"
     )
     return header + "\n".join(entries)

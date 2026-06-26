@@ -516,30 +516,43 @@ if query:
             st.markdown(answer)
             elapsed = time.time() - start
         else:
-            with st.spinner("Retrieving relevant knowledge..."):
-                try:
-                    result = pre_graph.invoke({
-                        "user_query": query,
-                        "conversation_history": history,
-                    })
-                except Exception as e:
-                    elapsed = time.time() - start
-                    error_msg = (
-                        f"**Azure OpenAI is temporarily unavailable.** "
-                        f"The service returned an error after retrying: `{type(e).__name__}: {e}`\n\n"
-                        f"Please try again in a few minutes."
-                    )
-                    st.error(error_msg, icon="⚠️")
-                    st.caption(f"⏱️ {elapsed:.1f}s")
-                    assistant_msg = {
-                        "role": "assistant",
-                        "content": error_msg,
-                        "route_expander": None,
-                        "chunks_expander": None,
-                    }
-                    st.session_state.messages.append(assistant_msg)
-                    history_store.append({"role": "assistant", "content": error_msg})
-                    st.stop()
+            _STATUS_LABELS = {
+                "route": "Routing query...",
+                "retrieve": "Retrieving chunks...",
+                "rerank": "Grading relevance...",
+                "skip_rerank": "High-confidence chunks — skipping rerank...",
+                "decline": "Out of domain.",
+            }
+            try:
+                with st.status("Thinking...", expanded=False) as status:
+                    result = {}
+                    for event in pre_graph.stream(
+                        {"user_query": query, "conversation_history": history},
+                        stream_mode="updates",
+                    ):
+                        for node_name in event:
+                            label = _STATUS_LABELS.get(node_name, node_name)
+                            status.update(label=label)
+                            result.update(event[node_name])
+                    status.update(label="Generating answer...", state="running")
+            except Exception as e:
+                elapsed = time.time() - start
+                error_msg = (
+                    f"**Azure OpenAI is temporarily unavailable.** "
+                    f"The service returned an error after retrying: `{type(e).__name__}: {e}`\n\n"
+                    f"Please try again in a few minutes."
+                )
+                st.error(error_msg, icon="⚠️")
+                st.caption(f"⏱️ {elapsed:.1f}s")
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": error_msg,
+                    "route_expander": None,
+                    "chunks_expander": None,
+                }
+                st.session_state.messages.append(assistant_msg)
+                history_store.append({"role": "assistant", "content": error_msg})
+                st.stop()
 
             route = result.get("route", {})
             graded = result.get("graded_chunks", [])
