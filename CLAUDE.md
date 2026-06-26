@@ -68,6 +68,7 @@ Supporting modules under `ciathena_kb/`:
 - **`prompt_manager.py`** — manages pipeline prompt templates (router, rerank, generate). Loads from blob when available, falls back to built-in defaults. Prompts editable via Streamlit UI without redeploying.
 - **`ingestion_log.py`** — tracks ingested artifacts in `.chroma/ingestion_log.json`. Smart re-ingestion: compares `content_version` + file hash (supports both local files and blob URIs via `_bytes_hash`).
 - **`qa_cache.py`** — session-scoped Q&A result cache. Keyed by normalized query string (lowercase, whitespace-collapsed). Uses generation-based invalidation: bumping a counter makes all entries stale without walking the cache. FIFO eviction at `max_entries` (default 100). Caches all standalone queries regardless of conversation position; vague follow-ups ("tell me more", "explain that") are detected by `is_followup_query()` heuristic and skipped.
+- **`chat_history.py`** — persistent chat history storage. `ChatHistoryStore(session_id, blob_client=None)` saves conversation messages to a JSON file keyed by session ID. Storage: blob `chat_history/{session_id}.json` or local `.chroma/chat_history/{session_id}.json`. Survives page reloads via `st.query_params["session"]` URL parameter. MAX_MESSAGES=200 with FIFO truncation. Methods: `append(message)`, `clear()`, `delete()`, `list_sessions()`.
 
 ### The artifact contract (most important domain concept)
 

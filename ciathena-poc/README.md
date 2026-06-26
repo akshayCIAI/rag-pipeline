@@ -32,6 +32,7 @@ ciathena-poc/
     blob_client.py          # Azure Blob Storage client for artifacts + prompts (optional, versioned)
     prompt_manager.py       # prompt template manager (blob-backed with built-in defaults)
     qa_cache.py             # session-scoped Q&A result cache (generation-based invalidation)
+    chat_history.py         # persistent chat history storage (blob or local, keyed by session ID)
   artifacts/                # 3 sample artifacts (concept, methodology, playbook)
   ingest.py                 # CLI: smart re-ingest + blob/local source + --clear flag
   chat.py                   # CLI: interactive or single-query agentic Q&A (with history)
@@ -213,7 +214,7 @@ streamlit run app.py
 ```
 
 Features:
-- **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks; supports follow-up questions with conversation history (last 5 turns)
+- **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks; supports follow-up questions with conversation history (last 5 turns); persistent chat history survives page reloads via URL session ID; "New conversation" button starts a fresh session
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
@@ -282,6 +283,7 @@ built-in defaults when no blob copy exists.
 - **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response; route/retrieve/rerank run first with a spinner, then the answer appears token-by-token
 - **Follow-up questions**: conversation history (last 5 Q&A turns) is passed to the router and generator so the pipeline can resolve references like "tell me more" or "compare that with X"; the router rewrites follow-ups into self-contained queries for retrieval
 - **Q&A caching**: session-scoped cache for pipeline results; all standalone queries are cached regardless of conversation position — repeated identical questions return instantly; vague follow-ups ("tell me more") are detected and excluded from cache; invalidated automatically on artifact upload, re-ingest, or prompt edits; cache stats shown in sidebar
+- **Persistent chat history**: conversations stored as JSON files keyed by session ID (blob or local); session ID persisted in URL query params so history survives page reloads; "New conversation" button starts a fresh session
 
 ## What this PoC covers (and does not)
 
@@ -310,6 +312,7 @@ are later phases per the PoC plan.
 - **Session-scoped Q&A cache** — standalone queries cached regardless of conversation position; vague follow-ups detected by `is_followup_query()` heuristic and excluded; generation-based invalidation on artifact upload, re-ingest, or prompt edits; FIFO eviction at 100 entries; cache stats shown in sidebar
 - **Cache bug fixes** — fixed cache never serving hits after the first turn; fixed only first-turn queries being cached
 - **`dataset_catalog` component type** — new chunked artifact type for dataset navigation; body key `datasets`, items chunked by `dataset_ref`, embeds display name, role, grain, vendor, known gaps with business aliases and disambiguation triggers as recall boosters
+- **Persistent chat history** — conversations survive page reloads; messages stored in JSON files keyed by session ID (blob or local `.chroma/chat_history/`); session ID persisted in URL query params (`?session=...`); "New conversation" button in sidebar starts a fresh session; MAX_MESSAGES=200 with FIFO truncation
 
 ### v0.3 — Working copy for Release 3
 
