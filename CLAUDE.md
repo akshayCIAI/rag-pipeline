@@ -73,7 +73,7 @@ Supporting modules under `ciathena_kb/`:
 
 Every artifact is one YAML doc = **envelope** (identity + retrieval-filtering + governance) + **body** (type-specific content). Two axes drive retrieval filtering:
 - **`layer`**: `general` → `usecase` → `udm` → `client_facing` (general concepts are client-agnostic; higher layers `inherits_from` lower ones).
-- **`component_type`**: `concept`, `methodology`, `process_flow`, `sttm_mapping`, `dq_rule`, `playbook`, `anomaly` (chunked) vs the whole-doc types above (not chunked).
+- **`component_type`**: `concept`, `methodology`, `process_flow`, `sttm_mapping`, `dq_rule`, `playbook`, `anomaly`, `dataset_catalog` (chunked) vs the whole-doc types above (not chunked).
 
 The mapping from `component_type` → which body list to chunk, which fields are embeddable text, which are recall boosters, and the per-item id field all live as dicts at the top of `loader.py` and `chunker.py`. **Adding a new component_type means editing those dicts**, not just adding a file.
 

@@ -32,8 +32,8 @@ ENVELOPE_KEYS = {
 VALID_LAYERS = {"general", "usecase", "udm", "client_facing"}
 VALID_COMPONENT_TYPES = {
     "concept", "methodology", "sttm_mapping", "dq_rule", "process_flow",
-    "playbook", "anomaly", "metadata_contract", "agent_contract",
-    "sql_generation_contract",
+    "playbook", "anomaly", "dataset_catalog", "metadata_contract",
+    "agent_contract", "sql_generation_contract",
 }
 VALID_REVIEW_STATUS = {"draft", "sme_review", "approved", "deprecated"}
 
@@ -47,6 +47,7 @@ LIST_KEY_BY_TYPE = {
     "dq_rule": "rules",
     "playbook": "scenarios",
     "anomaly": "signals",
+    "dataset_catalog": "datasets",
 }
 WHOLE_DOC_TYPES = {"metadata_contract", "agent_contract", "sql_generation_contract"}
 

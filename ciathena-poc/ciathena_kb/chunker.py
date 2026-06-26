@@ -30,6 +30,7 @@ TEXT_FIELDS = {
     "dq_rule": ["rule_type", "expression", "rationale", "remediation"],
     "playbook": ["primary_analysis", "analysis_logic", "narrative_template"],
     "anomaly": ["highlight_text"],
+    "dataset_catalog": ["display_name", "canonical_name", "use_case_role", "grain", "vendor", "known_gaps"],
 }
 RECALL_FIELDS = {
     "concept": ["synonyms", "disambiguation_triggers", "adjacent_concepts"],
@@ -39,6 +40,7 @@ RECALL_FIELDS = {
     "dq_rule": [],
     "playbook": ["trigger_patterns"],
     "anomaly": [],
+    "dataset_catalog": ["business_aliases", "disambiguation_triggers", "source_of_truth_for"],
 }
 # The per-item id field name, used to build a stable chunk id.
 ITEM_ID_FIELD = {
@@ -49,6 +51,7 @@ ITEM_ID_FIELD = {
     "dq_rule": "rule_id",
     "playbook": "scenario_id",
     "anomaly": "signal_id",
+    "dataset_catalog": "dataset_ref",
 }
 
 

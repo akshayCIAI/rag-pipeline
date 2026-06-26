@@ -309,6 +309,7 @@ are later phases per the PoC plan.
 - **Follow-up question support** — conversation history (last 5 Q&A turns) injected into router and generator; router rewrites follow-ups into self-contained queries for retrieval
 - **Session-scoped Q&A cache** — standalone queries cached regardless of conversation position; vague follow-ups detected by `is_followup_query()` heuristic and excluded; generation-based invalidation on artifact upload, re-ingest, or prompt edits; FIFO eviction at 100 entries; cache stats shown in sidebar
 - **Cache bug fixes** — fixed cache never serving hits after the first turn; fixed only first-turn queries being cached
+- **`dataset_catalog` component type** — new chunked artifact type for dataset navigation; body key `datasets`, items chunked by `dataset_ref`, embeds display name, role, grain, vendor, known gaps with business aliases and disambiguation triggers as recall boosters
 
 ### v0.3 — Working copy for Release 3
 
