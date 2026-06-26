@@ -279,8 +279,11 @@ built-in defaults when no blob copy exists.
 - **ChromaDB fallback**: `PersistentClient` is used locally; on Streamlit Cloud (detected via `/mount/src` or `STREAMLIT_SHARING_MODE`), uses in-memory `chromadb.Client()` directly to avoid Rust-binding initialization failures
 - **Artifact validation**: invalid YAML files (wrong `component_type`, missing fields, malformed YAML syntax) are skipped with a warning instead of crashing the app; skipped files shown in the sidebar
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
-- **Batch rerank optimization**: rerank step uses a single batched LLM call instead of one per chunk, reducing rerank from ~8 calls to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
-- **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response; route/retrieve/rerank run first with a spinner, then the answer appears token-by-token
+- **Adaptive rerank**: rerank step uses a single batched LLM call instead of one per chunk; chunks with cosine >= 0.7 auto-pass; when score gap between top-k and next chunk exceeds 0.1, returns top-k directly without LLM call; conditional graph edge bypasses rerank node entirely when all top chunks are high-confidence — saves ~2s per query in clear-cut cases
+- **Embedding cache**: single-query embeddings are LRU-cached (512 entries) so repeated/similar queries skip the Azure embedding API call entirely (~1.5s savings)
+- **Compact routing catalog**: merges synonyms/disambiguation into trigger_patterns, truncates covers lists to top-5 per artifact — reduces router prompt token count for faster LLM response
+- **Progressive status updates**: pipeline stages show real-time progress via `st.status()` ("Routing query..." → "Retrieving chunks..." → "Grading relevance..." → "Generating answer...") using LangGraph's `stream()` mode instead of a static spinner
+- **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response
 - **Follow-up questions**: conversation history (last 5 Q&A turns) is passed to the router and generator so the pipeline can resolve references like "tell me more" or "compare that with X"; the router rewrites follow-ups into self-contained queries for retrieval
 - **Q&A caching**: session-scoped cache for pipeline results; all standalone queries are cached regardless of conversation position — repeated identical questions return instantly; vague follow-ups ("tell me more") are detected and excluded from cache; invalidated automatically on artifact upload, re-ingest, or prompt edits; cache stats shown in sidebar
 - **Persistent chat history**: conversations stored as JSON files keyed by session ID (blob or local); session ID persisted in URL query params so history survives page reloads; "New conversation" button starts a fresh session
@@ -313,6 +316,7 @@ are later phases per the PoC plan.
 - **Cache bug fixes** — fixed cache never serving hits after the first turn; fixed only first-turn queries being cached
 - **`dataset_catalog` component type** — new chunked artifact type for dataset navigation; body key `datasets`, items chunked by `dataset_ref`, embeds display name, role, grain, vendor, known gaps with business aliases and disambiguation triggers as recall boosters
 - **Persistent chat history** — conversations survive page reloads; messages stored in JSON files keyed by session ID (blob or local `.chroma/chat_history/`); session ID persisted in URL query params (`?session=...`); "New conversation" button in sidebar starts a fresh session; MAX_MESSAGES=200 with FIFO truncation
+- **Response time optimizations** — conditional rerank bypass (skips LLM call when top-k chunks are all high-confidence or score gap is clear), adaptive score-gap reranking, embedding LRU cache (512 entries), compact routing catalog (fewer prompt tokens), progressive `st.status()` updates replacing static spinner
 
 ### v0.3 — Working copy for Release 3
 

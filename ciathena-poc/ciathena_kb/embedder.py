@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+from functools import lru_cache
 from typing import Protocol
 
 
@@ -54,7 +55,14 @@ class AzureOpenAIEmbedder:
             api_version=_emb_env("API_VERSION") or "2024-02-01",
         )
 
+    @lru_cache(maxsize=512)
+    def _embed_single(self, text: str) -> tuple[float, ...]:
+        resp = self._client.embeddings.create(model=self._deployment, input=[text])
+        return tuple(resp.data[0].embedding)
+
     def embed(self, texts: list[str]) -> list[list[float]]:
+        if len(texts) == 1:
+            return [list(self._embed_single(texts[0]))]
         resp = self._client.embeddings.create(model=self._deployment, input=texts)
         return [d.embedding for d in resp.data]
 

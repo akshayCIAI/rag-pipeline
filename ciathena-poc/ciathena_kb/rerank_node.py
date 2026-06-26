@@ -19,6 +19,7 @@ GRADE_SYSTEM_PROMPT = DEFAULT_PROMPTS["rerank_grading"]
 
 COSINE_THRESHOLD = 0.15
 HIGH_CONFIDENCE_THRESHOLD = 0.7
+SCORE_GAP_THRESHOLD = 0.1
 
 
 def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = None) -> Callable:
@@ -45,6 +46,15 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
 
         high_confidence = [c for c in candidates if c.get("score", 0) >= HIGH_CONFIDENCE_THRESHOLD]
         needs_grading = [c for c in candidates if c.get("score", 0) < HIGH_CONFIDENCE_THRESHOLD]
+
+        if not needs_grading:
+            return {"graded_chunks": high_confidence[:top_k]}
+
+        scores = [c.get("score", 0) for c in candidates]
+        if len(scores) > top_k:
+            gap = scores[top_k - 1] - scores[top_k]
+            if gap >= SCORE_GAP_THRESHOLD:
+                return {"graded_chunks": candidates[:top_k]}
 
         graded = list(high_confidence)
 

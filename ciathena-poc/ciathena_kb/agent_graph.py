@@ -20,7 +20,7 @@ from .catalog import build_routing_catalog
 from .generate_node import make_generate_node
 from .llm import ChatLLM, get_chat_llm
 from .loader import Artifact
-from .rerank_node import make_rerank_node
+from .rerank_node import make_rerank_node, HIGH_CONFIDENCE_THRESHOLD
 from .retrieval_node import AgentState, make_retrieval_node
 from .router_node import make_router_node
 from .store import KnowledgeStore
@@ -32,6 +32,16 @@ def _should_generate(state: dict[str, Any]) -> str:
     if not route.get("in_domain", True):
         return "decline"
     return "continue"
+
+
+def _should_rerank(state: dict[str, Any]) -> str:
+    """Skip rerank when all top retrieved chunks are high-confidence."""
+    chunks = state.get("retrieved_chunks", [])
+    top_k = int(os.environ.get("RETRIEVAL_TOP_K", "4"))
+    top_chunks = chunks[:top_k]
+    if top_chunks and all(c.get("score", 0) >= HIGH_CONFIDENCE_THRESHOLD for c in top_chunks):
+        return "skip"
+    return "rerank"
 
 
 def build_agent_graph(
@@ -67,10 +77,15 @@ def build_agent_graph(
         "graded_chunks": [],
     }
 
+    def skip_rerank_node(state: dict[str, Any]) -> dict[str, Any]:
+        chunks = state.get("retrieved_chunks", [])
+        return {"graded_chunks": chunks[:k]}
+
     g = StateGraph(AgentState)
     g.add_node("route", router)
     g.add_node("retrieve", retriever)
     g.add_node("rerank", reranker)
+    g.add_node("skip_rerank", skip_rerank_node)
     g.add_node("generate", generator)
     g.add_node("decline", decline_node)
 
@@ -79,8 +94,12 @@ def build_agent_graph(
         "continue": "retrieve",
         "decline": "decline",
     })
-    g.add_edge("retrieve", "rerank")
+    g.add_conditional_edges("retrieve", _should_rerank, {
+        "rerank": "rerank",
+        "skip": "skip_rerank",
+    })
     g.add_edge("rerank", "generate")
+    g.add_edge("skip_rerank", "generate")
     g.add_edge("generate", END)
     g.add_edge("decline", END)
 
@@ -123,10 +142,15 @@ def build_pre_generate_graph(
         "graded_chunks": [],
     }
 
+    def skip_rerank_node(state: dict[str, Any]) -> dict[str, Any]:
+        chunks = state.get("retrieved_chunks", [])
+        return {"graded_chunks": chunks[:k]}
+
     g = StateGraph(AgentState)
     g.add_node("route", router)
     g.add_node("retrieve", retriever)
     g.add_node("rerank", reranker)
+    g.add_node("skip_rerank", skip_rerank_node)
     g.add_node("decline", decline_node)
 
     g.add_edge(START, "route")
@@ -134,8 +158,12 @@ def build_pre_generate_graph(
         "continue": "retrieve",
         "decline": "decline",
     })
-    g.add_edge("retrieve", "rerank")
+    g.add_conditional_edges("retrieve", _should_rerank, {
+        "rerank": "rerank",
+        "skip": "skip_rerank",
+    })
     g.add_edge("rerank", END)
+    g.add_edge("skip_rerank", END)
     g.add_edge("decline", END)
 
     return g.compile()
