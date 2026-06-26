@@ -65,7 +65,7 @@ Supporting modules under `ciathena_kb/`:
 - **`blob_client.py`** — Azure Blob Storage client for artifact YAML files and prompt templates. `get_blob_client()` returns None when env vars missing (opt-in, same pattern as embedder). Artifacts stored under `artifacts/` prefix with timestamped version snapshots under `versions/`. Prompts stored under `prompts/` prefix.
 - **`prompt_manager.py`** — manages pipeline prompt templates (router, rerank, generate). Loads from blob when available, falls back to built-in defaults. Prompts editable via Streamlit UI without redeploying.
 - **`ingestion_log.py`** — tracks ingested artifacts in `.chroma/ingestion_log.json`. Smart re-ingestion: compares `content_version` + file hash (supports both local files and blob URIs via `_bytes_hash`).
-- **`qa_cache.py`** — session-scoped Q&A result cache. Keyed by normalized query string (lowercase, whitespace-collapsed). Uses generation-based invalidation: bumping a counter makes all entries stale without walking the cache. FIFO eviction at `max_entries` (default 100). Only caches first-turn queries (follow-ups are context-dependent).
+- **`qa_cache.py`** — session-scoped Q&A result cache. Keyed by normalized query string (lowercase, whitespace-collapsed). Uses generation-based invalidation: bumping a counter makes all entries stale without walking the cache. FIFO eviction at `max_entries` (default 100). Caches all standalone queries regardless of conversation position; vague follow-ups ("tell me more", "explain that") are detected by `is_followup_query()` heuristic and skipped.
 
 ### The artifact contract (most important domain concept)
 

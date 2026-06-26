@@ -5,12 +5,46 @@ Session-scoped Q&A result cache. Keyed by normalized query string.
 Uses generation-based invalidation: bumping the generation counter makes
 all existing entries stale without walking the cache. Stale entries are
 lazily evicted on get().
+
+Caching policy: standalone questions are always cached regardless of
+conversation position. Vague follow-ups ("tell me more", "explain that")
+are context-dependent and skipped.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+_FOLLOWUP_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"^tell me more",
+        r"^explain that",
+        r"^what about (that|this|it|the (first|second|third|last|next|previous) (one|point|item))",
+        r"^(elaborate|expand|continue|go on|keep going)",
+        r"^(yes|yeah|yep|sure|ok|okay)[\s,\.!?]*$",
+        r"^more (details?|info|information)",
+        r"^(and|but|also|what else)\b",
+        r"^can you (explain|elaborate|expand)",
+        r"^(why|how) (is|does|did|was|do) (that|this|it)\b",
+        r"^what (do you mean|does that mean)",
+        r"^compare (that|this|it|them)",
+    ]
+]
+
+MIN_STANDALONE_WORDS = 4
+
+
+def is_followup_query(query: str) -> bool:
+    """Heuristic: return True if the query looks like a context-dependent follow-up."""
+    q = query.strip()
+    if any(pat.search(q) for pat in _FOLLOWUP_PATTERNS):
+        return True
+    words = q.split()
+    if len(words) < MIN_STANDALONE_WORDS and not q.endswith("?"):
+        return True
+    return False
 
 
 @dataclass

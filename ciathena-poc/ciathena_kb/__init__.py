@@ -13,7 +13,7 @@ from .agent_graph import build_agent_graph, build_pre_generate_graph
 from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
 from .prompt_manager import PromptManager
-from .qa_cache import QACache
+from .qa_cache import QACache, is_followup_query
 
 __all__ = [
     "Artifact", "load_artifact", "load_artifact_from_bytes", "load_artifacts", "ArtifactError",
@@ -29,4 +29,5 @@ __all__ = [
     "ArtifactBlobClient", "get_blob_client",
     "PromptManager",
     "QACache",
+    "is_followup_query",
 ]

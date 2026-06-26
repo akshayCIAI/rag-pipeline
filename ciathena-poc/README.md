@@ -279,7 +279,7 @@ built-in defaults when no blob copy exists.
 - **Batch rerank optimization**: rerank step uses a single batched LLM call instead of one per chunk, reducing rerank from ~8 calls to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
 - **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response; route/retrieve/rerank run first with a spinner, then the answer appears token-by-token
 - **Follow-up questions**: conversation history (last 5 Q&A turns) is passed to the router and generator so the pipeline can resolve references like "tell me more" or "compare that with X"; the router rewrites follow-ups into self-contained queries for retrieval
-- **Q&A caching**: session-scoped cache for pipeline results; repeated identical first-turn queries return instantly; invalidated automatically on artifact upload, re-ingest, or prompt edits; cache stats shown in sidebar
+- **Q&A caching**: session-scoped cache for pipeline results; all standalone queries are cached regardless of conversation position — repeated identical questions return instantly; vague follow-ups ("tell me more") are detected and excluded from cache; invalidated automatically on artifact upload, re-ingest, or prompt edits; cache stats shown in sidebar
 
 ## What this PoC covers (and does not)
 

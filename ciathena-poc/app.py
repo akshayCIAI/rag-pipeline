@@ -38,6 +38,7 @@ from ciathena_kb import (
     get_blob_client,
     PromptManager,
     QACache,
+    is_followup_query,
 )
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
@@ -529,7 +530,7 @@ if query:
             elapsed = time.time() - start
             citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
 
-            if not history:
+            if not is_followup_query(query):
                 qa_cache.put(query, route, graded, answer, citations)
 
         if citations:
