@@ -16,6 +16,7 @@ from .store import KnowledgeStore, RetrievedChunk
 class AgentState(TypedDict, total=False):
     # inputs
     user_query: str
+    conversation_history: list[dict[str, str]]
     # set by router
     route: dict[str, Any]
     # set by retrieval

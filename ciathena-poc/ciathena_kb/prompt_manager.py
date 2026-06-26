@@ -44,6 +44,10 @@ INSTRUCTIONS:
    "advisory" (what should I do / where should I move), "comparison" (X vs Y).
 5. Rewrite the query to be more specific and embedding-friendly. Expand
    abbreviations, add domain synonyms where helpful.
+6. If conversation history is provided, use it to resolve references in the
+   current question (e.g. "tell me more", "what about the second point",
+   "compare that with X"). The rewritten_query MUST always be a fully
+   self-contained question that makes sense without the history.
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{
@@ -87,6 +91,10 @@ RULES:
    - advisory: actionable recommendation grounded in playbook logic
    - comparison: structured comparison with differences highlighted
 5. Keep answers focused and structured. Use bullet points for lists.
+6. If conversation history is provided, maintain coherence with prior answers.
+   You may reference information from your prior answers when relevant, but
+   every factual claim must still be grounded in the current knowledge chunks.
+   Do not repeat prior answers verbatim — build on them.
 
 USER INTENT: {intent}
 

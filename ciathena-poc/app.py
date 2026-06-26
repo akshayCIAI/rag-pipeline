@@ -37,12 +37,14 @@ from ciathena_kb import (
     ArtifactError,
     get_blob_client,
     PromptManager,
+    QACache,
 )
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
 from ciathena_kb.ingestion_log import _bytes_hash
 
 ARTIFACTS_DIR = pathlib.Path(__file__).parent / "artifacts"
+MAX_HISTORY_TURNS = int(os.environ.get("HISTORY_MAX_TURNS", "5"))
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,23 @@ def get_prompt_manager():
     if "prompt_manager" not in st.session_state:
         st.session_state.prompt_manager = PromptManager(blob_client=get_blob())
     return st.session_state.prompt_manager
+
+
+def get_qa_cache():
+    if "qa_cache" not in st.session_state:
+        st.session_state.qa_cache = QACache(max_entries=100)
+    return st.session_state.qa_cache
+
+
+def _build_history(messages: list[dict], max_turns: int = MAX_HISTORY_TURNS) -> list[dict[str, str]]:
+    """Extract last N Q&A pairs from session messages for LLM context."""
+    pairs = []
+    for msg in messages:
+        if msg["role"] in ("user", "assistant"):
+            content = msg.get("content", "")
+            if content and not content.startswith("**Azure OpenAI is temporarily unavailable"):
+                pairs.append({"role": msg["role"], "content": content})
+    return pairs[-(max_turns * 2):]
 
 
 def _smart_ingest_artifact(artifact, data_bytes, store, log, embedder, file_hash=None):
@@ -216,6 +235,9 @@ with st.sidebar:
     st.caption(f"Chat: `{llm.model_name}`")
     st.caption(f"Storage: `{'Azure Blob' if blob else 'local'}`")
     st.caption(f"Chunks in store: **{store.count()}**")
+    _cache = get_qa_cache()
+    _cs = _cache.stats
+    st.caption(f"Cache: **{_cs['entries']}** entries, **{_cs['hits']}** hits / **{_cs['misses']}** misses")
 
     st.divider()
 
@@ -276,6 +298,7 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"**Error:** {e}", icon="❌")
 
+        get_qa_cache().invalidate()
         st.cache_resource.clear()
         st.rerun()
 
@@ -283,6 +306,7 @@ with st.sidebar:
     if st.button("Re-ingest all artifacts", use_container_width=True):
         store.clear()
         log.clear()
+        get_qa_cache().invalidate()
 
         reingest_skipped = []
         if blob:
@@ -376,12 +400,14 @@ with st.sidebar:
             with col_save:
                 if st.button("Save", key=f"save_{key}", use_container_width=True):
                     pm.save(key, edited)
+                    get_qa_cache().invalidate()
                     st.success("Saved! Pipeline will use the updated prompt.", icon="✅")
                     st.cache_resource.clear()
                     st.rerun()
             with col_reset:
                 if st.button("Reset to default", key=f"reset_{key}", use_container_width=True):
                     pm.save(key, default_val)
+                    get_qa_cache().invalidate()
                     st.success("Reset to default.", icon="🔄")
                     st.cache_resource.clear()
                     st.rerun()
@@ -436,17 +462,58 @@ if query:
     with st.chat_message("user"):
         st.markdown(query)
 
+    qa_cache = get_qa_cache()
+    history = _build_history(st.session_state.messages[:-1])
+
+    cached = qa_cache.get(query) if not history else None
+
     with st.chat_message("assistant"):
         start = time.time()
 
-        with st.spinner("Retrieving relevant knowledge..."):
+        if cached:
+            route = cached.route
+            graded = cached.graded_chunks
+            answer = cached.answer
+            citations = cached.citations
+            st.markdown(answer)
+            elapsed = time.time() - start
+        else:
+            with st.spinner("Retrieving relevant knowledge..."):
+                try:
+                    result = pre_graph.invoke({
+                        "user_query": query,
+                        "conversation_history": history,
+                    })
+                except Exception as e:
+                    elapsed = time.time() - start
+                    error_msg = (
+                        f"**Azure OpenAI is temporarily unavailable.** "
+                        f"The service returned an error after retrying: `{type(e).__name__}: {e}`\n\n"
+                        f"Please try again in a few minutes."
+                    )
+                    st.error(error_msg, icon="⚠️")
+                    st.caption(f"⏱️ {elapsed:.1f}s")
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": error_msg,
+                        "route_expander": None,
+                        "chunks_expander": None,
+                    })
+                    st.stop()
+
+            route = result.get("route", {})
+            graded = result.get("graded_chunks", [])
+
             try:
-                result = pre_graph.invoke({"user_query": query})
+                answer = st.write_stream(
+                    stream_gen(route, graded, query, conversation_history=history)
+                )
             except Exception as e:
                 elapsed = time.time() - start
                 error_msg = (
                     f"**Azure OpenAI is temporarily unavailable.** "
-                    f"The service returned an error after retrying: `{type(e).__name__}: {e}`\n\n"
+                    f"The service returned an error during answer generation: "
+                    f"`{type(e).__name__}: {e}`\n\n"
                     f"Please try again in a few minutes."
                 )
                 st.error(error_msg, icon="⚠️")
@@ -459,31 +526,11 @@ if query:
                 })
                 st.stop()
 
-        route = result.get("route", {})
-        graded = result.get("graded_chunks", [])
-
-        try:
-            answer = st.write_stream(stream_gen(route, graded, query))
-        except Exception as e:
             elapsed = time.time() - start
-            error_msg = (
-                f"**Azure OpenAI is temporarily unavailable.** "
-                f"The service returned an error during answer generation: "
-                f"`{type(e).__name__}: {e}`\n\n"
-                f"Please try again in a few minutes."
-            )
-            st.error(error_msg, icon="⚠️")
-            st.caption(f"⏱️ {elapsed:.1f}s")
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": error_msg,
-                "route_expander": None,
-                "chunks_expander": None,
-            })
-            st.stop()
+            citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
 
-        elapsed = time.time() - start
-        citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
+            if not history:
+                qa_cache.put(query, route, graded, answer, citations)
 
         if citations:
             citation_text = ", ".join(f"`{c}`" for c in citations)

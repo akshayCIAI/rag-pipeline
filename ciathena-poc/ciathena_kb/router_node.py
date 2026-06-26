@@ -29,8 +29,11 @@ def make_router_node(llm: ChatLLM, catalog: str, system_prompt: str | None = Non
 
         messages = [
             {"role": "system", "content": prompt_template.format(catalog=catalog)},
-            {"role": "user", "content": user_query},
         ]
+        history = state.get("conversation_history", [])
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_query})
 
         route = llm.chat_json(messages, temperature=0)
 

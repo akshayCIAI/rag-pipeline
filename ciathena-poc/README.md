@@ -29,10 +29,11 @@ ciathena-poc/
     ingestion_log.py        # version-aware ingestion tracking (skip unchanged artifacts)
     blob_client.py          # Azure Blob Storage client for artifacts + prompts (optional, versioned)
     prompt_manager.py       # prompt template manager (blob-backed with built-in defaults)
+    qa_cache.py             # session-scoped Q&A result cache (generation-based invalidation)
   artifacts/                # 3 sample artifacts (concept, methodology, playbook)
   ingest.py                 # CLI: smart re-ingest + blob/local source + --clear flag
-  chat.py                   # CLI: interactive or single-query agentic Q&A
-  app.py                    # Streamlit demo: chat + upload + prompt editor + ingestion log
+  chat.py                   # CLI: interactive or single-query agentic Q&A (with history)
+  app.py                    # Streamlit demo: chat + upload + prompt editor + ingestion log + Q&A cache
   demo.py                   # original retrieval-only end-to-end runner
   .env.example              # env var template — copy to .env
   requirements.txt
@@ -77,6 +78,7 @@ resources** — each has its own endpoint/key/deployment vars.
 | `CHROMA_PERSIST_DIR` | Chroma storage path (default `./.chroma`) |
 | `RETRIEVAL_CANDIDATE_POOL` | Chunks retrieved before rerank (default `12`) |
 | `RETRIEVAL_TOP_K` | Chunks kept after rerank (default `4`) |
+| `HISTORY_MAX_TURNS` | Q&A turns kept for follow-up context (default `5`) |
 
 With **no env vars set**, the pipeline runs offline using a deterministic fake
 embedder and a stubbed chat LLM — useful for wiring/smoke tests. Retrieval
@@ -209,7 +211,7 @@ streamlit run app.py
 ```
 
 Features:
-- **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks
+- **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks; supports follow-up questions with conversation history (last 5 turns)
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
@@ -276,6 +278,8 @@ built-in defaults when no blob copy exists.
 - **Streamlit error handling**: Azure outages show a friendly warning instead of a traceback crash
 - **Batch rerank optimization**: rerank step uses a single batched LLM call instead of one per chunk, reducing rerank from ~8 calls to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
 - **Streaming answer generation**: answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response; route/retrieve/rerank run first with a spinner, then the answer appears token-by-token
+- **Follow-up questions**: conversation history (last 5 Q&A turns) is passed to the router and generator so the pipeline can resolve references like "tell me more" or "compare that with X"; the router rewrites follow-ups into self-contained queries for retrieval
+- **Q&A caching**: session-scoped cache for pipeline results; repeated identical first-turn queries return instantly; invalidated automatically on artifact upload, re-ingest, or prompt edits; cache stats shown in sidebar
 
 ## What this PoC covers (and does not)
 
@@ -286,7 +290,8 @@ LLM relevance grading, grounded answer generation with citations, graceful
 refusal on out-of-domain or no-context queries, smart re-ingestion with
 version tracking, Azure Blob Storage integration (versioned artifacts +
 prompt templates), auto-ingest on startup, LLM retry logic, blob-backed
-prompt management, streaming answer generation, and Streamlit demo UI with
+prompt management, streaming answer generation, conversation history with
+follow-up support, session-scoped Q&A caching, and Streamlit demo UI with
 artifact upload and prompt editor.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
