@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import uuid
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 if sys.stdout.encoding != "utf-8":
@@ -39,6 +40,7 @@ from ciathena_kb import (
     PromptManager,
     QACache,
     is_followup_query,
+    ChatHistoryStore,
 )
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
@@ -91,6 +93,27 @@ def get_qa_cache():
     if "qa_cache" not in st.session_state:
         st.session_state.qa_cache = QACache(max_entries=100)
     return st.session_state.qa_cache
+
+
+def _get_session_id() -> str:
+    """Get or create a session ID persisted in URL query params."""
+    params = st.query_params
+    sid = params.get("session")
+    if not sid:
+        sid = uuid.uuid4().hex[:12]
+        st.query_params["session"] = sid
+    return sid
+
+
+def get_history_store() -> ChatHistoryStore:
+    """Get or create the persistent chat history store for this session."""
+    sid = _get_session_id()
+    cache_key = f"history_store_{sid}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = ChatHistoryStore(
+            session_id=sid, blob_client=get_blob(),
+        )
+    return st.session_state[cache_key]
 
 
 def _build_history(messages: list[dict], max_turns: int = MAX_HISTORY_TURNS) -> list[dict[str, str]]:
@@ -239,6 +262,17 @@ with st.sidebar:
     _cache = get_qa_cache()
     _cs = _cache.stats
     st.caption(f"Cache: **{_cs['entries']}** entries, **{_cs['hits']}** hits / **{_cs['misses']}** misses")
+    st.caption(f"Session: `{_get_session_id()}`")
+
+    if st.button("New conversation", use_container_width=True, type="primary"):
+        old_sid = _get_session_id()
+        new_sid = uuid.uuid4().hex[:12]
+        st.query_params["session"] = new_sid
+        old_key = f"history_store_{old_sid}"
+        if old_key in st.session_state:
+            del st.session_state[old_key]
+        st.session_state.messages = []
+        st.rerun()
 
     st.divider()
 
@@ -430,10 +464,11 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# Chat history
+# Chat history (persistent)
 # ---------------------------------------------------------------------------
+history_store = get_history_store()
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = history_store.messages
 
 # Header
 st.title("🧬 ciATHENA Knowledge Spine")
@@ -459,7 +494,9 @@ user_input = st.chat_input("Ask a question...")
 query = pending or user_input
 
 if query:
-    st.session_state.messages.append({"role": "user", "content": query})
+    user_msg = {"role": "user", "content": query}
+    st.session_state.messages.append(user_msg)
+    history_store.append(user_msg)
     with st.chat_message("user"):
         st.markdown(query)
 
@@ -494,12 +531,14 @@ if query:
                     )
                     st.error(error_msg, icon="⚠️")
                     st.caption(f"⏱️ {elapsed:.1f}s")
-                    st.session_state.messages.append({
+                    assistant_msg = {
                         "role": "assistant",
                         "content": error_msg,
                         "route_expander": None,
                         "chunks_expander": None,
-                    })
+                    }
+                    st.session_state.messages.append(assistant_msg)
+                    history_store.append({"role": "assistant", "content": error_msg})
                     st.stop()
 
             route = result.get("route", {})
@@ -519,12 +558,14 @@ if query:
                 )
                 st.error(error_msg, icon="⚠️")
                 st.caption(f"⏱️ {elapsed:.1f}s")
-                st.session_state.messages.append({
+                assistant_msg = {
                     "role": "assistant",
                     "content": error_msg,
                     "route_expander": None,
                     "chunks_expander": None,
-                })
+                }
+                st.session_state.messages.append(assistant_msg)
+                history_store.append({"role": "assistant", "content": error_msg})
                 st.stop()
 
             elapsed = time.time() - start
@@ -571,9 +612,11 @@ if query:
             with st.expander("📦 Retrieved chunks", expanded=False):
                 st.markdown(chunks_md)
 
-        st.session_state.messages.append({
+        assistant_msg = {
             "role": "assistant",
             "content": answer,
             "route_expander": route_md if route_md else None,
             "chunks_expander": chunks_md if chunks_md else None,
-        })
+        }
+        st.session_state.messages.append(assistant_msg)
+        history_store.append({"role": "assistant", "content": answer})

@@ -14,6 +14,7 @@ from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
 from .prompt_manager import PromptManager
 from .qa_cache import QACache, is_followup_query
+from .chat_history import ChatHistoryStore
 
 __all__ = [
     "Artifact", "load_artifact", "load_artifact_from_bytes", "load_artifacts", "ArtifactError",
@@ -30,4 +31,5 @@ __all__ = [
     "PromptManager",
     "QACache",
     "is_followup_query",
+    "ChatHistoryStore",
 ]
