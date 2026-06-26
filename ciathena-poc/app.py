@@ -465,7 +465,7 @@ if query:
     qa_cache = get_qa_cache()
     history = _build_history(st.session_state.messages[:-1])
 
-    cached = qa_cache.get(query) if not history else None
+    cached = qa_cache.get(query)
 
     with st.chat_message("assistant"):
         start = time.time()
