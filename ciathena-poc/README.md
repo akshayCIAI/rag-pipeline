@@ -1,5 +1,7 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
+> **v0.4** — Working copy for Release 4 (2026-06-26)
+
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
 life-sciences commercial analytics questions with **LLM-powered query routing,
@@ -297,3 +299,44 @@ artifact upload and prompt editor.
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
 are later phases per the PoC plan.
+
+## Changelog
+
+### v0.4 — Working copy for Release 4 (2026-06-26)
+
+- **Batch rerank optimization** — rerank step uses a single batched LLM call instead of one-per-chunk, reducing LLM calls from ~8 to 1; chunks with cosine score >= 0.7 skip LLM grading entirely
+- **Streaming answer generation** — answer tokens stream to the Streamlit UI in real time via `st.write_stream()` instead of waiting for the full response
+- **Follow-up question support** — conversation history (last 5 Q&A turns) injected into router and generator; router rewrites follow-ups into self-contained queries for retrieval
+- **Session-scoped Q&A cache** — standalone queries cached regardless of conversation position; vague follow-ups detected by `is_followup_query()` heuristic and excluded; generation-based invalidation on artifact upload, re-ingest, or prompt edits; FIFO eviction at 100 entries; cache stats shown in sidebar
+- **Cache bug fixes** — fixed cache never serving hits after the first turn; fixed only first-turn queries being cached
+
+### v0.3 — Working copy for Release 3
+
+- Azure Blob Storage integration (versioned artifacts + prompt templates)
+- Blob-backed prompt management (edit router/rerank/generate prompts via Streamlit sidebar)
+- Auto-ingest on startup from blob
+- Smart re-ingestion with version tracking and content hashing
+- Ingestion log with expandable entries in sidebar
+- LLM retry logic (3 attempts, exponential backoff for transient Azure errors)
+- Temperature auto-strip for reasoning/o-series models
+- Dynamic model label from deployment name
+- Artifact validation with skip-and-warn for invalid files
+- Streamlit Cloud in-memory ChromaDB fallback
+
+### v0.2 — Working copy for Release 2
+
+- LLM-powered query routing with routing catalog
+- Metadata pre-filtering (usecase + component_type + review_status)
+- General-layer OR-merge retrieval
+- LLM relevance grading (rerank node)
+- Grounded answer generation with citations
+- Graceful refusal on out-of-domain queries
+- Streamlit demo UI with chat interface
+
+### v0.1 — Working copy for Release 1
+
+- Artifact YAML parsing and validation (envelope + body)
+- Universal chunking rule (one list-item = one chunk)
+- Azure OpenAI embedding with offline fake fallback
+- ChromaDB vector store with persistent storage
+- Basic retrieval-only pipeline (`demo.py`)
