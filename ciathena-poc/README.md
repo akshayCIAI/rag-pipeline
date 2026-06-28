@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.5** — Working copy for Release 5 (2026-06-28)
+> **v0.6** — Working copy for Release 6 (2026-06-28)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -306,6 +306,13 @@ encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
 are later phases per the PoC plan.
 
 ## Changelog
+
+### v0.6 — Working copy for Release 6 (2026-06-28)
+
+- **Intent-aware reranking** — router's intent (definition/how-to/advisory/comparison) boosts matching component types via `INTENT_BOOST` (0.03); definition queries surface concept/methodology chunks, advisory queries surface playbook/process_flow chunks
+- **Chunk deduplication** — limits to max 2 chunks per `artifact_id` across all rerank paths (including skip-rerank bypass) to ensure diverse context in the generation window
+- **Cleaner output** — removed timing display (`⏱️`) from chat responses for a more business-oriented presentation
+- **Unified finalization** — all rerank code paths (LLM grading, high-confidence bypass, score-gap bypass, skip-rerank) now apply the same intent-aware sorting and dedup logic via shared `_finalize()` helper
 
 ### v0.5 — Working copy for Release 5 (2026-06-28)
 

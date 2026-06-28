@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Version 0.5** — Working copy for Release 5 (2026-06-28)
+> **Version 0.6** — Working copy for Release 6 (2026-06-28)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
