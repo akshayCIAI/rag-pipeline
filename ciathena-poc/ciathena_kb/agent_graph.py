@@ -20,7 +20,7 @@ from .catalog import build_routing_catalog
 from .generate_node import make_generate_node
 from .llm import ChatLLM, get_chat_llm
 from .loader import Artifact
-from .rerank_node import make_rerank_node, HIGH_CONFIDENCE_THRESHOLD
+from .rerank_node import make_rerank_node, HIGH_CONFIDENCE_THRESHOLD, INTENT_PREFERRED_TYPES, INTENT_BOOST, _deduplicate_chunks
 from .retrieval_node import AgentState, make_retrieval_node
 from .router_node import make_router_node
 from .store import KnowledgeStore
@@ -78,8 +78,14 @@ def build_agent_graph(
     }
 
     def skip_rerank_node(state: dict[str, Any]) -> dict[str, Any]:
-        chunks = state.get("retrieved_chunks", [])
-        return {"graded_chunks": chunks[:k]}
+        chunks = list(state.get("retrieved_chunks", []))
+        intent = state.get("route", {}).get("intent", "definition")
+        preferred = INTENT_PREFERRED_TYPES.get(intent, set())
+        chunks.sort(
+            key=lambda c: c.get("score", 0) + (INTENT_BOOST if c.get("component_type", "") in preferred else 0),
+            reverse=True,
+        )
+        return {"graded_chunks": _deduplicate_chunks(chunks)[:k]}
 
     g = StateGraph(AgentState)
     g.add_node("route", router)
@@ -143,8 +149,14 @@ def build_pre_generate_graph(
     }
 
     def skip_rerank_node(state: dict[str, Any]) -> dict[str, Any]:
-        chunks = state.get("retrieved_chunks", [])
-        return {"graded_chunks": chunks[:k]}
+        chunks = list(state.get("retrieved_chunks", []))
+        intent = state.get("route", {}).get("intent", "definition")
+        preferred = INTENT_PREFERRED_TYPES.get(intent, set())
+        chunks.sort(
+            key=lambda c: c.get("score", 0) + (INTENT_BOOST if c.get("component_type", "") in preferred else 0),
+            reverse=True,
+        )
+        return {"graded_chunks": _deduplicate_chunks(chunks)[:k]}
 
     g = StateGraph(AgentState)
     g.add_node("route", router)
