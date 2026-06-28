@@ -20,6 +20,28 @@ GRADE_SYSTEM_PROMPT = DEFAULT_PROMPTS["rerank_grading"]
 COSINE_THRESHOLD = 0.15
 HIGH_CONFIDENCE_THRESHOLD = 0.7
 SCORE_GAP_THRESHOLD = 0.1
+INTENT_BOOST = 0.03
+
+INTENT_PREFERRED_TYPES: dict[str, set[str]] = {
+    "definition": {"concept", "methodology"},
+    "how-to": {"methodology", "process_flow"},
+    "advisory": {"playbook", "process_flow", "anomaly"},
+    "comparison": {"concept", "methodology", "sttm_mapping"},
+}
+
+
+def _deduplicate_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the highest-scoring chunk per artifact_id to ensure diversity."""
+    seen_artifacts: dict[str, int] = {}
+    result: list[dict[str, Any]] = []
+    for chunk in chunks:
+        aid = chunk.get("artifact_id", "")
+        if aid not in seen_artifacts:
+            seen_artifacts[aid] = 0
+        seen_artifacts[aid] += 1
+        if seen_artifacts[aid] <= 2:
+            result.append(chunk)
+    return result
 
 
 def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = None) -> Callable:
@@ -27,10 +49,24 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
     use_llm_grading = not isinstance(llm, FakeChatLLM)
     grade_prompt = system_prompt or GRADE_SYSTEM_PROMPT
 
+    def _finalize(chunks: list[dict[str, Any]], intent: str) -> list[dict[str, Any]]:
+        """Apply intent-aware sorting, dedup, and truncate to top_k."""
+        preferred = INTENT_PREFERRED_TYPES.get(intent, set())
+
+        def _sort_key(c: dict[str, Any]) -> float:
+            score = c.get("score", 0)
+            if c.get("component_type", "") in preferred:
+                score += INTENT_BOOST
+            return score
+
+        chunks.sort(key=_sort_key, reverse=True)
+        return _deduplicate_chunks(chunks)[:top_k]
+
     def rerank_node(state: dict[str, Any]) -> dict[str, Any]:
         route = state.get("route", {})
         user_query = state.get("user_query", "")
         chunks = state.get("retrieved_chunks", [])
+        intent = route.get("intent", "definition")
 
         if not route.get("in_domain", True):
             return {"graded_chunks": []}
@@ -40,7 +76,7 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
         above_threshold = [c for c in chunks if c.get("score", 0) >= COSINE_THRESHOLD]
 
         if not use_llm_grading or not above_threshold:
-            return {"graded_chunks": above_threshold[:top_k]}
+            return {"graded_chunks": _finalize(above_threshold, intent)}
 
         candidates = above_threshold[:top_k * 2]
 
@@ -48,13 +84,13 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
         needs_grading = [c for c in candidates if c.get("score", 0) < HIGH_CONFIDENCE_THRESHOLD]
 
         if not needs_grading:
-            return {"graded_chunks": high_confidence[:top_k]}
+            return {"graded_chunks": _finalize(high_confidence, intent)}
 
         scores = [c.get("score", 0) for c in candidates]
         if len(scores) > top_k:
             gap = scores[top_k - 1] - scores[top_k]
             if gap >= SCORE_GAP_THRESHOLD:
-                return {"graded_chunks": candidates[:top_k]}
+                return {"graded_chunks": _finalize(candidates, intent)}
 
         graded = list(high_confidence)
 
@@ -84,7 +120,6 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
             except Exception:
                 graded.extend(needs_grading)
 
-        graded.sort(key=lambda c: c.get("score", 0), reverse=True)
-        return {"graded_chunks": graded[:top_k]}
+        return {"graded_chunks": _finalize(graded, intent)}
 
     return rerank_node

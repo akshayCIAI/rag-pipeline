@@ -543,7 +543,6 @@ if query:
                     f"Please try again in a few minutes."
                 )
                 st.error(error_msg, icon="⚠️")
-                st.caption(f"⏱️ {elapsed:.1f}s")
                 assistant_msg = {
                     "role": "assistant",
                     "content": error_msg,
@@ -570,7 +569,6 @@ if query:
                     f"Please try again in a few minutes."
                 )
                 st.error(error_msg, icon="⚠️")
-                st.caption(f"⏱️ {elapsed:.1f}s")
                 assistant_msg = {
                     "role": "assistant",
                     "content": error_msg,
@@ -590,8 +588,6 @@ if query:
         if citations:
             citation_text = ", ".join(f"`{c}`" for c in citations)
             st.caption(f"📎 Citations: {citation_text}")
-
-        st.caption(f"⏱️ {elapsed:.1f}s")
 
         route_md = ""
         if route:

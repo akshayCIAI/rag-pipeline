@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.4** — Working copy for Release 4 (2026-06-26)
+> **v0.5** — Working copy for Release 5 (2026-06-28)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -306,6 +306,15 @@ encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
 are later phases per the PoC plan.
 
 ## Changelog
+
+### v0.5 — Working copy for Release 5 (2026-06-28)
+
+- **Persistent chat history** — conversations survive page reloads; messages stored in JSON files keyed by session ID (blob or local `.chroma/chat_history/`); session ID persisted in URL query params (`?session=...`); "New conversation" button in sidebar starts a fresh session; MAX_MESSAGES=200 with FIFO truncation
+- **Response time optimizations** — conditional rerank bypass via LangGraph conditional edge (skips rerank node entirely when all top-k chunks have cosine >= 0.7); adaptive score-gap reranking (skips LLM call when gap between top-k and next chunk exceeds 0.1); embedding LRU cache (512 entries, avoids redundant Azure API calls); compact routing catalog (merged triggers, truncated covers for fewer prompt tokens)
+- **Progressive status updates** — replaced static spinner with `st.status()` showing per-stage labels ("Routing query..." → "Retrieving chunks..." → "Grading relevance..." → "Generating answer...") using LangGraph's `graph.stream(stream_mode="updates")`
+- **Intent-aware reranking** — router's intent (definition/how-to/advisory/comparison) boosts matching component types so definition queries surface concept chunks and advisory queries surface playbook chunks
+- **Chunk deduplication** — limits to 2 chunks per artifact to ensure the generation context window has diverse information instead of redundant content from the same source
+- **Cleaner output** — removed timing display from chat responses for a more business-oriented presentation
 
 ### v0.4 — Working copy for Release 4 (2026-06-26)
 

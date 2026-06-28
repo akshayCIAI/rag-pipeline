@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Version 0.4** — Working copy for Release 4 (2026-06-26)
+> **Version 0.5** — Working copy for Release 5 (2026-06-28)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -53,6 +53,8 @@ route → retrieve → rerank (or skip) → generate
 
 Performance optimizations: conditional rerank bypass (skips LLM call when all top-k chunks have cosine >= 0.7 or score gap >= 0.1), compact routing catalog (merged triggers, truncated covers), embedding LRU cache (512 entries, avoids redundant Azure API calls), and progressive `st.status()` updates during pipeline execution.
 
+Retrieval quality: intent-aware reranking (router's intent boosts matching component_types — definition→concept/methodology, advisory→playbook/process_flow), chunk deduplication (max 2 chunks per artifact_id for diverse context).
+
 Supporting modules under `ciathena_kb/`:
 
 - **`loader.py`** — parses each artifact YAML into an `Artifact(envelope, body)`. Files may use `---` separators; all YAML docs in a file are *merged* into one mapping, then split into envelope vs body by the known `ENVELOPE_KEYS` set. Validates against closed controlled vocabularies. Also provides `load_artifact_from_bytes()` for parsing from blob downloads.
@@ -63,7 +65,7 @@ Supporting modules under `ciathena_kb/`:
 - **`catalog.py`** — builds a routing catalog from artifact metadata (trigger_patterns, disambiguation_triggers, synonyms, item names) for injection into the router prompt. Compact mode (default) merges synonyms/disambiguation into triggers and truncates covers lists to reduce token count.
 - **`router_node.py`** — LLM-powered query router. Analyzes user question against the routing catalog and outputs `{in_domain, usecase, component_types, intent, rewritten_query}`. Generous with `in_domain` — only marks false for clearly unrelated topics. Accepts optional `system_prompt` override from `PromptManager`. Injects `conversation_history` from state so follow-up queries are resolved into self-contained rewritten queries.
 - **`retrieval_node.py`** — LangGraph retrieval node. Reads from `route` dict (agentic flow) or top-level state keys (backward compat for `demo.py`).
-- **`rerank_node.py`** — post-retrieval filtering with adaptive strategy: chunks with cosine >= `HIGH_CONFIDENCE_THRESHOLD` (0.7) auto-pass; when score gap between top-k and (k+1)-th chunk exceeds `SCORE_GAP_THRESHOLD` (0.1), returns top-k directly without LLM; otherwise batch-grades borderline chunks (0.15–0.7) in a single LLM call. Uses the **rewritten query** (not raw) for grading. Generous grading for broad questions. Accepts optional `system_prompt` override.
+- **`rerank_node.py`** — post-retrieval filtering with adaptive strategy: chunks with cosine >= `HIGH_CONFIDENCE_THRESHOLD` (0.7) auto-pass; when score gap between top-k and (k+1)-th chunk exceeds `SCORE_GAP_THRESHOLD` (0.1), returns top-k directly without LLM; otherwise batch-grades borderline chunks (0.15–0.7) in a single LLM call. Uses the **rewritten query** (not raw) for grading. Generous grading for broad questions. Accepts optional `system_prompt` override. **Intent-aware ranking**: applies `INTENT_BOOST` (0.03) to chunks whose `component_type` matches the router's intent (e.g. definition→concept/methodology, advisory→playbook/process_flow). **Chunk deduplication**: limits to 2 chunks per `artifact_id` to ensure diverse context.
 - **`generate_node.py`** — grounded answer generation with `[artifact_id::chunk_id]` citations. Refuses when no approved context survives filtering. Accepts optional `system_prompt` override. Also provides `make_stream_generate()` for token-by-token streaming in the Streamlit UI. Both paths inject `conversation_history` for coherent multi-turn answers.
 - **`agent_graph.py`** — assembles the full LangGraph with conditional edges: in_domain check (skip generation if out-of-domain) and rerank bypass (skip LLM grading when all top-k chunks are high-confidence). Accepts optional `prompts` dict to pass prompt overrides to all nodes. Also provides `build_pre_generate_graph()` that stops after rerank (used with streaming). Streamlit UI uses `graph.stream()` for progressive status updates.
 - **`blob_client.py`** — Azure Blob Storage client for artifact YAML files and prompt templates. `get_blob_client()` returns None when env vars missing (opt-in, same pattern as embedder). Artifacts stored under `artifacts/` prefix with timestamped version snapshots under `versions/`. Prompts stored under `prompts/` prefix.
