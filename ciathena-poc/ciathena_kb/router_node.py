@@ -19,6 +19,9 @@ from .prompt_manager import DEFAULT_PROMPTS
 
 ROUTER_SYSTEM_PROMPT = DEFAULT_PROMPTS["router_system"]
 
+# Keys allowed in chroma_filter — strip anything else before passing to the store
+_VALID_FILTER_KEYS = frozenset({"usecase", "component_type", "review_status", "layer", "artifact_id"})
+
 
 def make_router_node(llm: ChatLLM, catalog: str, system_prompt: str | None = None):
     """Return a LangGraph node function that routes the user query."""
@@ -37,6 +40,13 @@ def make_router_node(llm: ChatLLM, catalog: str, system_prompt: str | None = Non
 
         route = llm.chat_json(messages, temperature=0)
 
+        # Validate chroma_filter — only allow known metadata field names
+        raw_filter = route.get("chroma_filter") or {}
+        chroma_filter = (
+            {k: v for k, v in raw_filter.items() if k in _VALID_FILTER_KEYS}
+            if isinstance(raw_filter, dict) else {}
+        )
+
         return {
             "route": {
                 "in_domain": route.get("in_domain", True),
@@ -44,6 +54,7 @@ def make_router_node(llm: ChatLLM, catalog: str, system_prompt: str | None = Non
                 "component_types": route.get("component_types", []),
                 "intent": route.get("intent", "definition"),
                 "rewritten_query": route.get("rewritten_query", user_query),
+                "chroma_filter": chroma_filter,
             },
         }
 

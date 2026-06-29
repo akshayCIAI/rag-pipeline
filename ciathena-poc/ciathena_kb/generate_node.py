@@ -21,6 +21,12 @@ NO_CONTEXT_RESPONSE = (
     "artifacts haven't been ingested yet."
 )
 
+FALLBACK_DISCLAIMER = (
+    "⚠️ *No high-confidence approved content was found for this query. "
+    "The following answer is based on the closest available context in the knowledge base "
+    "— treat it as indicative only and verify with your data team before acting.*\n\n"
+)
+
 
 def _format_chunks(chunks: list[dict[str, Any]]) -> str:
     parts: list[str] = []
@@ -43,11 +49,27 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None) -> Callab
         user_query = state.get("user_query", "")
         graded = state.get("graded_chunks", [])
 
-        if not route.get("in_domain", True) or not graded:
-            return {
-                "answer": NO_CONTEXT_RESPONSE,
-                "citations": [],
-            }
+        if not route.get("in_domain", True):
+            return {"answer": NO_CONTEXT_RESPONSE, "citations": [], "is_fallback": False}
+
+        if not graded:
+            fallback = state.get("fallback_chunks", [])
+            if fallback:
+                intent = route.get("intent", "definition")
+                chunks_text = _format_chunks(fallback)
+                messages = [
+                    {"role": "system", "content": gen_prompt.format(
+                        intent=intent, chunks=chunks_text)},
+                ]
+                history = state.get("conversation_history", [])
+                if history:
+                    messages.extend(history)
+                messages.append({"role": "user", "content": user_query})
+                raw_answer = llm.chat(messages, temperature=0.1)
+                answer = FALLBACK_DISCLAIMER + raw_answer
+                citations = sorted({c.get("chunk_id", "") for c in fallback if c.get("chunk_id")})
+                return {"answer": answer, "citations": citations, "is_fallback": True}
+            return {"answer": NO_CONTEXT_RESPONSE, "citations": [], "is_fallback": False}
 
         intent = route.get("intent", "definition")
         chunks_text = _format_chunks(graded)
@@ -62,13 +84,9 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None) -> Callab
         messages.append({"role": "user", "content": user_query})
 
         answer = llm.chat(messages, temperature=0.1)
-
         citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
 
-        return {
-            "answer": answer,
-            "citations": citations,
-        }
+        return {"answer": answer, "citations": citations, "is_fallback": False}
 
     return generate_node
 
@@ -82,13 +100,26 @@ def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None) -> Call
         graded_chunks: list[dict[str, Any]],
         user_query: str,
         conversation_history: list[dict[str, str]] | None = None,
+        fallback_chunks: list[dict[str, Any]] | None = None,
     ) -> Generator[str, None, None]:
-        if not route.get("in_domain", True) or not graded_chunks:
+        if not route.get("in_domain", True):
             yield NO_CONTEXT_RESPONSE
             return
 
+        effective = graded_chunks or []
+        is_fallback = not effective and bool(fallback_chunks)
+        if is_fallback:
+            effective = fallback_chunks or []
+
+        if not effective:
+            yield NO_CONTEXT_RESPONSE
+            return
+
+        if is_fallback:
+            yield FALLBACK_DISCLAIMER
+
         intent = route.get("intent", "definition")
-        chunks_text = _format_chunks(graded_chunks)
+        chunks_text = _format_chunks(effective)
 
         messages = [
             {"role": "system", "content": gen_prompt.format(

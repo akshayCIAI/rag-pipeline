@@ -69,14 +69,19 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
         intent = route.get("intent", "definition")
 
         if not route.get("in_domain", True):
-            return {"graded_chunks": []}
+            return {"graded_chunks": [], "fallback_chunks": []}
 
         grading_query = route.get("rewritten_query") or user_query
 
         above_threshold = [c for c in chunks if c.get("score", 0) >= COSINE_THRESHOLD]
 
-        if not use_llm_grading or not above_threshold:
-            return {"graded_chunks": _finalize(above_threshold, intent)}
+        if not above_threshold:
+            # No chunks cleared the minimum threshold — pass best available as fallback
+            fallback = sorted(chunks, key=lambda c: c.get("score", 0), reverse=True)[:top_k]
+            return {"graded_chunks": [], "fallback_chunks": fallback}
+
+        if not use_llm_grading:
+            return {"graded_chunks": _finalize(above_threshold, intent), "fallback_chunks": []}
 
         candidates = above_threshold[:top_k * 2]
 
@@ -84,13 +89,13 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
         needs_grading = [c for c in candidates if c.get("score", 0) < HIGH_CONFIDENCE_THRESHOLD]
 
         if not needs_grading:
-            return {"graded_chunks": _finalize(high_confidence, intent)}
+            return {"graded_chunks": _finalize(high_confidence, intent), "fallback_chunks": []}
 
         scores = [c.get("score", 0) for c in candidates]
         if len(scores) > top_k:
             gap = scores[top_k - 1] - scores[top_k]
             if gap >= SCORE_GAP_THRESHOLD:
-                return {"graded_chunks": _finalize(candidates, intent)}
+                return {"graded_chunks": _finalize(candidates, intent), "fallback_chunks": []}
 
         graded = list(high_confidence)
 
@@ -120,6 +125,6 @@ def make_rerank_node(llm: ChatLLM, top_k: int = 4, system_prompt: str | None = N
             except Exception:
                 graded.extend(needs_grading)
 
-        return {"graded_chunks": _finalize(graded, intent)}
+        return {"graded_chunks": _finalize(graded, intent), "fallback_chunks": []}
 
     return rerank_node

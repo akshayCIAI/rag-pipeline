@@ -41,6 +41,7 @@ from ciathena_kb import (
     QACache,
     is_followup_query,
     ChatHistoryStore,
+    FeedbackStore,
 )
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
@@ -114,6 +115,59 @@ def get_history_store() -> ChatHistoryStore:
             session_id=sid, blob_client=get_blob(),
         )
     return st.session_state[cache_key]
+
+
+def get_feedback_store() -> FeedbackStore:
+    """Get or create the persistent feedback store for this session."""
+    sid = _get_session_id()
+    cache_key = f"feedback_store_{sid}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = FeedbackStore(
+            session_id=sid, blob_client=get_blob(),
+        )
+    return st.session_state[cache_key]
+
+
+def _render_feedback_buttons(msg: dict, feedback_store: FeedbackStore) -> None:
+    """Render thumbs up/down buttons for an assistant message."""
+    mid = msg.get("message_id", "")
+    if not mid:
+        return
+
+    if "feedback_given" not in st.session_state:
+        st.session_state.feedback_given = {}
+    given_rating = st.session_state.feedback_given.get(mid)
+
+    if given_rating is not None:
+        icon = "👍" if given_rating > 0 else "👎"
+        st.caption(f"Feedback recorded {icon}")
+        return
+
+    col1, col2, _ = st.columns([1, 1, 10])
+    with col1:
+        if st.button("👍", key=f"thumb_up_{mid}", help="Mark as helpful"):
+            feedback_store.append(
+                message_id=mid,
+                query=msg.get("user_query", ""),
+                answer=msg.get("content", ""),
+                rating=1,
+                artifacts_cited=msg.get("citations", []),
+            )
+            st.session_state.feedback_given[mid] = 1
+            st.rerun()
+    with col2:
+        if st.button("👎", key=f"thumb_down_{mid}", help="Mark as not helpful"):
+            feedback_store.append(
+                message_id=mid,
+                query=msg.get("user_query", ""),
+                answer=msg.get("content", ""),
+                rating=-1,
+                artifacts_cited=msg.get("citations", []),
+            )
+            st.session_state.feedback_given[mid] = -1
+            if feedback_store.should_invalidate_cache(msg.get("user_query", "")):
+                get_qa_cache().invalidate()
+            st.rerun()
 
 
 def _build_history(messages: list[dict], max_turns: int = MAX_HISTORY_TURNS) -> list[dict[str, str]]:
@@ -475,6 +529,7 @@ st.title("🧬 ciATHENA Knowledge Spine")
 st.caption("Ask any question about pharma life-sciences commercial analytics")
 
 # Render chat history
+_fb_store = get_feedback_store()
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -484,6 +539,8 @@ for msg in st.session_state.messages:
         if msg.get("chunks_expander"):
             with st.expander("📦 Retrieved chunks", expanded=False):
                 st.markdown(msg["chunks_expander"])
+        if msg["role"] == "assistant":
+            _render_feedback_buttons(msg, _fb_store)
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +565,8 @@ if query:
     with st.chat_message("assistant"):
         start = time.time()
 
+        fallback_chunks: list = []
+        expanded_queries_display: list = []
         if cached:
             route = cached.route
             graded = cached.graded_chunks
@@ -518,6 +577,7 @@ if query:
         else:
             _STATUS_LABELS = {
                 "route": "Routing query...",
+                "expand_queries": "Expanding query variations...",
                 "retrieve": "Retrieving chunks...",
                 "rerank": "Grading relevance...",
                 "skip_rerank": "High-confidence chunks — skipping rerank...",
@@ -555,10 +615,12 @@ if query:
 
             route = result.get("route", {})
             graded = result.get("graded_chunks", [])
+            fallback_chunks = result.get("fallback_chunks", [])
+            expanded_queries_display = result.get("expanded_queries", [])
 
             try:
                 answer = st.write_stream(
-                    stream_gen(route, graded, query, conversation_history=history)
+                    stream_gen(route, graded, query, conversation_history=history, fallback_chunks=fallback_chunks)
                 )
             except Exception as e:
                 elapsed = time.time() - start
@@ -580,7 +642,8 @@ if query:
                 st.stop()
 
             elapsed = time.time() - start
-            citations = sorted({c.get("chunk_id", "") for c in graded if c.get("chunk_id")})
+            effective_chunks = graded or fallback_chunks
+            citations = sorted({c.get("chunk_id", "") for c in effective_chunks if c.get("chunk_id")})
 
             if not is_followup_query(query):
                 qa_cache.put(query, route, graded, answer, citations)
@@ -600,14 +663,24 @@ if query:
             rq = route.get("rewritten_query", "")
             if rq:
                 route_md += f"**Rewritten query:** {rq}\n\n"
+            cf = route.get("chroma_filter")
+            if cf:
+                route_md += f"**Metadata filter:** `{cf}`\n\n"
+            if expanded_queries_display:
+                eq_list = "\n".join(f"- {q}" for q in expanded_queries_display)
+                route_md += f"**Expanded queries:**\n{eq_list}\n\n"
 
         if route_md:
             with st.expander("🔍 How it routed", expanded=False):
                 st.markdown(route_md)
 
         chunks_md = ""
-        if graded:
-            for i, c in enumerate(graded, 1):
+        display_chunks = graded if graded else (fallback_chunks if not cached else [])
+        is_fallback_display = not graded and bool(display_chunks)
+        if display_chunks:
+            if is_fallback_display:
+                chunks_md = "⚠️ **Fallback context** — no high-confidence chunks found; showing closest matches:\n\n"
+            for i, c in enumerate(display_chunks, 1):
                 score = c.get("score", 0)
                 cid = c.get("chunk_id", "")
                 ct = c.get("component_type", "")
@@ -621,11 +694,20 @@ if query:
             with st.expander("📦 Retrieved chunks", expanded=False):
                 st.markdown(chunks_md)
 
+        _msg_id = uuid.uuid4().hex[:12]
+        _render_feedback_buttons(
+            {"message_id": _msg_id, "user_query": query, "content": answer, "citations": citations},
+            get_feedback_store(),
+        )
+
         assistant_msg = {
             "role": "assistant",
             "content": answer,
             "route_expander": route_md if route_md else None,
             "chunks_expander": chunks_md if chunks_md else None,
+            "message_id": _msg_id,
+            "user_query": query,
+            "citations": citations,
         }
         st.session_state.messages.append(assistant_msg)
         history_store.append({"role": "assistant", "content": answer})

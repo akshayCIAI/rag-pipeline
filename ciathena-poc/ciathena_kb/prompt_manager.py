@@ -48,6 +48,11 @@ INSTRUCTIONS:
    current question (e.g. "tell me more", "what about the second point",
    "compare that with X"). The rewritten_query MUST always be a fully
    self-contained question that makes sense without the history.
+7. If the question clearly targets a specific subset of the corpus (e.g.
+   "approved playbooks", "general layer concepts", "dataset catalog for MMM",
+   "only methodology artifacts"), output a chroma_filter dict with one or more
+   of: usecase, component_type, review_status, layer, artifact_id.
+   Otherwise set chroma_filter to null.
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{
@@ -55,7 +60,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   "usecase": "General" or specific usecase,
   "component_types": [],
   "intent": "definition|how-to|advisory|comparison",
-  "rewritten_query": "expanded query text"
+  "rewritten_query": "expanded query text",
+  "chroma_filter": null or {{"field": "value"}}
 }}""",
 
     "rerank_grading": """\

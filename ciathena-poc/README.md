@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.6** — Working copy for Release 6 (2026-06-28)
+> **v0.7** — Working copy for Release 7 (2026-06-29)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -25,14 +25,17 @@ ciathena-poc/
     catalog.py              # builds routing catalog from artifact metadata
     router_node.py          # LLM query router (infers usecase, component_type, intent)
     retrieval_node.py       # LangGraph retrieval node (metadata pre-filter + General OR-merge)
-    rerank_node.py          # post-retrieval relevance grading + threshold
-    generate_node.py        # grounded answer generation with citations
-    agent_graph.py          # assembles the full LangGraph: route → retrieve → rerank → generate
+    rerank_node.py          # post-retrieval relevance grading + threshold; soft fallback when no chunks clear threshold
+    generate_node.py        # grounded answer generation with citations; fallback generation with ⚠️ disclaimer
+    query_expander_node.py  # LLM generates 3 query variations for multi-query retrieval
+    validation_node.py      # citation existence check + LLM grounding check after generation
+    agent_graph.py          # LangGraph: route → expand_queries → retrieve → rerank → generate → validation
     ingestion_log.py        # version-aware ingestion tracking (skip unchanged artifacts)
     blob_client.py          # Azure Blob Storage client for artifacts + prompts (optional, versioned)
     prompt_manager.py       # prompt template manager (blob-backed with built-in defaults)
     qa_cache.py             # session-scoped Q&A result cache (generation-based invalidation)
     chat_history.py         # persistent chat history storage (blob or local, keyed by session ID)
+    feedback_store.py       # thumbs up/down feedback storage; triggers cache invalidation on repeated negatives
   artifacts/                # 3 sample artifacts (concept, methodology, playbook)
   ingest.py                 # CLI: smart re-ingest + blob/local source + --clear flag
   chat.py                   # CLI: interactive or single-query agentic Q&A (with history)

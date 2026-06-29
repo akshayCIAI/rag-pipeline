@@ -9,12 +9,15 @@ from .catalog import build_routing_catalog
 from .router_node import make_router_node
 from .rerank_node import make_rerank_node
 from .generate_node import make_generate_node, make_stream_generate
+from .query_expander_node import make_query_expander_node
+from .validation_node import make_validation_node
 from .agent_graph import build_agent_graph, build_pre_generate_graph
 from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
 from .prompt_manager import PromptManager
 from .qa_cache import QACache, is_followup_query
 from .chat_history import ChatHistoryStore
+from .feedback_store import FeedbackStore
 
 __all__ = [
     "Artifact", "load_artifact", "load_artifact_from_bytes", "load_artifacts", "ArtifactError",
@@ -25,6 +28,7 @@ __all__ = [
     "get_chat_llm", "ChatLLM", "AzureChatLLM", "FakeChatLLM",
     "build_routing_catalog",
     "make_router_node", "make_rerank_node", "make_generate_node", "make_stream_generate",
+    "make_query_expander_node", "make_validation_node",
     "build_agent_graph", "build_pre_generate_graph",
     "IngestionLog",
     "ArtifactBlobClient", "get_blob_client",
@@ -32,4 +36,5 @@ __all__ = [
     "QACache",
     "is_followup_query",
     "ChatHistoryStore",
+    "FeedbackStore",
 ]
