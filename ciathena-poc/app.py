@@ -34,6 +34,7 @@ from ciathena_kb import (
     build_agent_graph,
     build_pre_generate_graph,
     make_stream_generate,
+    validate_answer,
     IngestionLog,
     ArtifactError,
     get_blob_client,
@@ -644,6 +645,25 @@ if query:
             elapsed = time.time() - start
             effective_chunks = graded or fallback_chunks
             citations = sorted({c.get("chunk_id", "") for c in effective_chunks if c.get("chunk_id")})
+
+            # Intent-aware validation — skip for fallback answers and offline mode
+            _is_fallback_answer = not graded and bool(fallback_chunks)
+            if not _is_fallback_answer and not isinstance(llm, FakeChatLLM) and effective_chunks:
+                _val = validate_answer(
+                    llm, route, effective_chunks, answer,
+                    system_prompt=pm.get("validation_grounding"),
+                )
+                _verdict = _val.get("verdict", "pass")
+                if _verdict == "warn":
+                    st.warning(
+                        f"Quality check: {_val.get('reason', '')}. {_val.get('suggestion', '')}",
+                        icon="⚠️",
+                    )
+                elif _verdict == "fail":
+                    st.error(
+                        f"Quality check: {_val.get('reason', '')}. {_val.get('suggestion', '')}",
+                        icon="❌",
+                    )
 
             if not is_followup_query(query):
                 qa_cache.put(query, route, graded, answer, citations)

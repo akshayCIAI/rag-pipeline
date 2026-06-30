@@ -10,7 +10,7 @@ from .router_node import make_router_node
 from .rerank_node import make_rerank_node
 from .generate_node import make_generate_node, make_stream_generate
 from .query_expander_node import make_query_expander_node
-from .validation_node import make_validation_node
+from .validation_node import make_validation_node, validate_answer
 from .agent_graph import build_agent_graph, build_pre_generate_graph
 from .ingestion_log import IngestionLog
 from .blob_client import ArtifactBlobClient, get_blob_client
@@ -28,7 +28,7 @@ __all__ = [
     "get_chat_llm", "ChatLLM", "AzureChatLLM", "FakeChatLLM",
     "build_routing_catalog",
     "make_router_node", "make_rerank_node", "make_generate_node", "make_stream_generate",
-    "make_query_expander_node", "make_validation_node",
+    "make_query_expander_node", "make_validation_node", "validate_answer",
     "build_agent_graph", "build_pre_generate_graph",
     "IngestionLog",
     "ArtifactBlobClient", "get_blob_client",

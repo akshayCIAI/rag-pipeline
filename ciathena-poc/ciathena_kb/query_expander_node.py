@@ -30,9 +30,10 @@ Respond ONLY with valid JSON (no markdown):
 {"queries": ["variation 1", "variation 2", "variation 3"]}"""
 
 
-def make_query_expander_node(llm: ChatLLM) -> Callable:
+def make_query_expander_node(llm: ChatLLM, system_prompt: str | None = None) -> Callable:
     """Return a LangGraph node that generates query variations for multi-query retrieval."""
     use_llm = not isinstance(llm, FakeChatLLM)
+    exp_prompt = system_prompt or EXPANDER_SYSTEM_PROMPT
 
     def query_expander_node(state: dict[str, Any]) -> dict[str, Any]:
         if not use_llm:
@@ -47,7 +48,7 @@ def make_query_expander_node(llm: ChatLLM) -> Callable:
             return {"expanded_queries": []}
 
         messages = [
-            {"role": "system", "content": EXPANDER_SYSTEM_PROMPT},
+            {"role": "system", "content": exp_prompt},
             {"role": "user", "content": base_query},
         ]
 

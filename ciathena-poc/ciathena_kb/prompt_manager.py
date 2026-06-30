@@ -6,9 +6,11 @@ falls back to built-in defaults. Prompts can be edited via the Streamlit UI
 and saved back to blob without redeploying.
 
 Prompt keys:
-  - router_system   — query router system prompt
-  - rerank_grading   — relevance grading system prompt
-  - generate_system  — answer generation system prompt
+  - router_system        — query router system prompt
+  - rerank_grading       — relevance grading system prompt
+  - generate_system      — answer generation system prompt
+  - query_expander       — query expansion prompt (generates 3 query variations)
+  - validation_grounding — intent-aware answer quality check prompt
 """
 
 from __future__ import annotations
@@ -106,12 +108,58 @@ USER INTENT: {intent}
 
 KNOWLEDGE CHUNKS:
 {chunks}""",
+
+    "query_expander": """\
+You are a query expansion assistant for a pharma commercial analytics knowledge base.
+Given a user question, generate 3 semantically diverse variations that preserve
+the original meaning while using different phrasing, synonyms, or perspectives.
+Each variation will be embedded and used to search a vector store independently —
+so each MUST be a standalone, complete, self-contained question.
+
+Rules:
+- Keep domain terminology accurate (GTN, MMM, HCP, DTC, etc.)
+- Vary the angle: try a definitional, a procedural, and a contextual variation
+- Do NOT add information not implied by the original question
+- Keep each variation concise (under 25 words)
+
+Respond ONLY with valid JSON (no markdown):
+{{"queries": ["variation 1", "variation 2", "variation 3"]}}""",
+
+    "validation_grounding": """\
+You are an answer quality checker for a pharma commercial analytics knowledge base.
+
+DETECTED INTENT: {intent}
+QUALITY RUBRIC: {rubric}
+
+TASK: Evaluate whether the generated answer satisfies the rubric and is grounded
+in the knowledge chunks provided.
+
+Guidelines:
+- Minor paraphrasing and inference from stated facts are acceptable.
+- Only flag clear hallucinations or claims that directly contradict the chunks.
+- A "warn" verdict means the answer is mostly correct but has gaps for the stated intent.
+- A "fail" verdict means the answer makes claims that contradict the chunks.
+- If the answer is short or only restates chunk content, it almost certainly passes.
+
+QUESTION: {question}
+
+KNOWLEDGE CHUNKS:
+{chunks}
+
+Respond ONLY with valid JSON (no markdown):
+{{"verdict": "pass", "passed": true, "issues": [], "reason": "brief summary", "suggestion": ""}}
+or with issues:
+{{"verdict": "warn", "passed": false, "issues": ["specific gap"], "reason": "brief summary", "suggestion": "actionable tip"}}
+or for contradictions:
+{{"verdict": "fail", "passed": false, "issues": ["specific contradiction"], "reason": "brief summary", "suggestion": "actionable tip"}}""",
 }
 
 PROMPT_LABELS: dict[str, str] = {
     "router_system": "Router System Prompt",
     "rerank_grading": "Rerank Grading Prompt",
     "generate_system": "Generate System Prompt",
+    "query_expander": "Query Expander Prompt",
+    "validation_grounding": "Validation Grounding Prompt",
 }
 
 
