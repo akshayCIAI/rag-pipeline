@@ -50,7 +50,33 @@ _DEFAULT_RUBRIC = (
     "Answer must be grounded in the chunks. Warn if vague. Fail if it contradicts chunks."
 )
 
-_VALIDATION_PROMPT = DEFAULT_PROMPTS["validation_grounding"]
+_VALIDATION_PROMPT = DEFAULT_PROMPTS.get("validation_grounding") or """\
+You are an answer quality checker for a pharma commercial analytics knowledge base.
+
+DETECTED INTENT: {intent}
+QUALITY RUBRIC: {rubric}
+
+TASK: Evaluate whether the generated answer satisfies the rubric and is grounded
+in the knowledge chunks provided.
+
+Guidelines:
+- Minor paraphrasing and inference from stated facts are acceptable.
+- Only flag clear hallucinations or claims that directly contradict the chunks.
+- A "warn" verdict means the answer is mostly correct but has gaps for the stated intent.
+- A "fail" verdict means the answer makes claims that contradict the chunks.
+- If the answer is short or only restates chunk content, it almost certainly passes.
+
+QUESTION: {question}
+
+KNOWLEDGE CHUNKS:
+{chunks}
+
+Respond ONLY with valid JSON (no markdown):
+{{"verdict": "pass", "passed": true, "issues": [], "reason": "brief summary", "suggestion": ""}}
+or with issues:
+{{"verdict": "warn", "passed": false, "issues": ["specific gap"], "reason": "brief summary", "suggestion": "actionable tip"}}
+or for contradictions:
+{{"verdict": "fail", "passed": false, "issues": ["specific contradiction"], "reason": "brief summary", "suggestion": "actionable tip"}}"""
 
 
 def _extract_cited_ids(answer: str) -> list[str]:
