@@ -65,11 +65,11 @@ def build_agent_graph(
     catalog = build_routing_catalog(artifacts)
 
     router = make_router_node(llm, catalog, system_prompt=p.get("router_system"))
-    expander = make_query_expander_node(llm)
+    expander = make_query_expander_node(llm, system_prompt=p.get("query_expander"))
     retriever = make_retrieval_node(store, candidate_pool=pool)
     reranker = make_rerank_node(llm, top_k=k, system_prompt=p.get("rerank_grading"))
     generator = make_generate_node(llm, system_prompt=p.get("generate_system"))
-    validator = make_validation_node(llm)
+    validator = make_validation_node(llm, system_prompt=p.get("validation_grounding"))
 
     decline_node = lambda state: {
         "answer": (
@@ -144,7 +144,7 @@ def build_pre_generate_graph(
     catalog = build_routing_catalog(artifacts)
 
     router = make_router_node(llm, catalog, system_prompt=p.get("router_system"))
-    expander = make_query_expander_node(llm)
+    expander = make_query_expander_node(llm, system_prompt=p.get("query_expander"))
     retriever = make_retrieval_node(store, candidate_pool=pool)
     reranker = make_rerank_node(llm, top_k=k, system_prompt=p.get("rerank_grading"))
 

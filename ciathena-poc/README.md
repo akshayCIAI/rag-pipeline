@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.7** — Working copy for Release 7 (2026-06-30)
+> **v0.8** — Working copy for Release 8 (2026-06-30)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -132,10 +132,13 @@ user_query
    refuses when neither graded nor fallback chunks available
     │
     ▼
-6. VALIDATION (chat.py only, not in streaming Streamlit path)
+6. INTENT-AWARE VALIDATION
    citation existence check: verifies [artifact::chunk] refs match context
-   LLM grounding check: flags claims not supported by provided chunks
-   sets validation_result = {"passed": bool, "issues": list}
+   LLM grounding check: per-intent rubric (definition/how-to/advisory/comparison)
+   verdict: pass | warn | fail  +  reason  +  suggestion
+   in chat.py: runs in graph, result in state
+   in Streamlit: validate_answer() called after streaming; surfaces
+                 st.warning() for warn or st.error() for fail
 ```
 
 The router uses a **routing catalog** built at startup from artifact metadata
@@ -242,7 +245,7 @@ Features:
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
-- **Prompt management** — edit router, rerank, and generate prompts directly in the sidebar; saves to blob so changes persist without redeploying
+- **Prompt management** — all 5 pipeline prompts (router, rerank, generate, query expander, validation grounding) editable directly in the sidebar; saves to blob so changes persist without redeploying
 - **Ingestion log** — expandable entries showing version, type, layer, chunk count, hash, source (blob/local), timestamp
 - **Status panel** — shows embedder/LLM/blob connection status, model names, storage mode, chunk count
 - **Graceful error handling** — shows friendly message when Azure is temporarily unavailable instead of crashing
@@ -268,10 +271,12 @@ ciathena-artifacts/           # container
       20260625_091500_gen-concept-pharma-001.yml
     mmm-methodology-core-001.yml/
       20260625_043000_mmm-methodology-core-001.yml
-  prompts/                    # editable prompt templates
+  prompts/                    # editable prompt templates (all 5)
     router_system.txt
     rerank_grading.txt
     generate_system.txt
+    query_expander.txt
+    validation_grounding.txt
 ```
 
 Every upload saves the file under `artifacts/` (the "current" copy used for ingestion) and
@@ -285,8 +290,7 @@ compares hashes — only new or changed artifacts are embedded, saving Azure Ope
 
 ## Prompt management
 
-Pipeline prompts (router, rerank, generate) can be edited in the Streamlit sidebar without
-code changes or redeployment:
+All 5 pipeline prompts (router, rerank, generate, query expander, validation grounding) can be edited in the Streamlit sidebar without code changes or redeployment:
 
 1. Open the **Prompt Management** section in the sidebar
 2. Edit the prompt text in the text area
@@ -321,19 +325,27 @@ with self-query metadata filter extraction, multi-query expansion (3
 variations per query), LLM relevance grading, intent-aware reranking, chunk
 deduplication, soft fallback retrieval (⚠️ disclaimer answers when no
 high-confidence chunks found), grounded answer generation with citations,
-output validation (citation existence + LLM grounding check), user feedback
-(👍/👎) with cache invalidation loop, graceful refusal on out-of-domain
-queries, smart re-ingestion with version tracking, Azure Blob Storage
-integration (versioned artifacts + prompt templates), auto-ingest on startup,
-LLM retry logic, blob-backed prompt management, streaming answer generation,
-conversation history with follow-up support, session-scoped Q&A caching, and
-Streamlit demo UI with artifact upload, prompt editor, and feedback buttons.
+intent-aware output validation (citation existence + LLM grounding check with
+per-intent rubrics → pass/warn/fail verdict with reason and suggestion), user
+feedback (👍/👎) with cache invalidation loop, graceful refusal on
+out-of-domain queries, smart re-ingestion with version tracking, Azure Blob
+Storage integration (versioned artifacts + prompt templates), auto-ingest on
+startup, LLM retry logic, blob-backed prompt management for all 5 pipeline
+prompts, streaming answer generation, conversation history with follow-up
+support, session-scoped Q&A caching, and Streamlit demo UI with artifact
+upload, prompt editor (all 5 prompts), and feedback buttons.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
 are later phases per the PoC plan.
 
 ## Changelog
+
+### v0.8 — Working copy for Release 8 (2026-06-30)
+
+- **Intent-aware self-validation** — `validation_node` now uses per-intent `INTENT_RUBRICS` (definition / how-to / advisory / comparison) to evaluate the generated answer; LLM returns a 3-tier `verdict: "pass" | "warn" | "fail"` with a `reason` and actionable `suggestion`; state key updated to `{"verdict", "passed", "issues", "reason", "suggestion"}`; in the Streamlit streaming path, `validate_answer()` (new standalone callable) is invoked after streaming completes and surfaces `st.warning()` for warn or `st.error()` for fail inline with the answer; skipped for fallback answers (already disclaimed) and offline mode (FakeChatLLM)
+- **All 5 prompts editable in Streamlit UI** — `query_expander` and `validation_grounding` added to `DEFAULT_PROMPTS` and `PROMPT_LABELS` in `prompt_manager.py`; both node factories (`make_query_expander_node`, `make_validation_node`) now accept `system_prompt` override; `agent_graph.py` passes `p.get("query_expander")` and `p.get("validation_grounding")` from the prompts dict; Streamlit sidebar prompt loop auto-displays all 5 (no UI change needed)
+- **Blob layout updated** — `prompts/` prefix now includes `query_expander.txt` and `validation_grounding.txt` in addition to the 3 original prompt files
 
 ### v0.7 — Working copy for Release 7 (2026-06-30)
 

@@ -4,10 +4,17 @@ ciathena_kb.validation_node
 Post-generation answer quality check.
   1. Citation existence check (no LLM) — flags [artifact::chunk] refs that don't
      match any chunk in the context.
-  2. LLM grounding check — flags claims not supported by the provided chunks.
+  2. Intent-aware LLM grounding check — evaluates the answer against per-intent
+     quality rubrics and flags unsupported claims or gaps.
      Skipped for fallback answers (already disclaimed) and when using FakeChatLLM.
 
-Sets state["validation_result"] = {"passed": bool, "issues": list[str]}.
+Sets state["validation_result"] = {
+    "verdict": "pass" | "warn" | "fail",
+    "passed": bool,
+    "issues": list[str],
+    "reason": str,
+    "suggestion": str,
+}.
 """
 
 from __future__ import annotations
@@ -16,29 +23,113 @@ import re
 from typing import Any, Callable
 
 from .llm import ChatLLM, FakeChatLLM
+from .prompt_manager import DEFAULT_PROMPTS
 
 
-GROUNDING_SYSTEM_PROMPT = """\
-You are an answer quality checker for a pharma commercial analytics knowledge base.
-Given an answer and the knowledge chunks it was grounded in, determine whether the
-answer makes claims NOT supported by those chunks.
+INTENT_RUBRICS: dict[str, str] = {
+    "definition": (
+        "Must clearly define the term and its key components. "
+        "Warn if the answer is vague or circular. Fail if the definition contradicts the chunks."
+    ),
+    "how-to": (
+        "Must include actionable steps or a clear process. "
+        "Warn if steps are vague or incomplete. Fail if steps contradict chunk content."
+    ),
+    "advisory": (
+        "Must give a concrete, grounded recommendation. "
+        "Warn if advice is generic without referencing specific metrics or thresholds from the chunks. "
+        "Fail if the recommendation contradicts playbook content."
+    ),
+    "comparison": (
+        "Must compare at least two concepts on defined dimensions. "
+        "Warn if one side is missing or underdeveloped. Fail if a comparison claim contradicts chunks."
+    ),
+}
 
-Guidelines:
-- Minor paraphrasing and inference from stated facts are acceptable.
-- Only flag clear hallucinations or claims that directly contradict the chunks.
-- If the answer is short or only restates chunk content, it almost certainly passes.
+_DEFAULT_RUBRIC = (
+    "Answer must be grounded in the chunks. Warn if vague. Fail if it contradicts chunks."
+)
 
-Respond ONLY with valid JSON (no markdown):
-{"passed": true, "issues": []}
-or
-{"passed": false, "issues": ["brief description of unsupported claim"]}"""
+_VALIDATION_PROMPT = DEFAULT_PROMPTS["validation_grounding"]
 
 
 def _extract_cited_ids(answer: str) -> list[str]:
     return re.findall(r"\[([^\]]+::[^\]]+)\]", answer)
 
 
-def make_validation_node(llm: ChatLLM) -> Callable:
+def validate_answer(
+    llm: ChatLLM,
+    route: dict[str, Any],
+    effective_chunks: list[dict[str, Any]],
+    answer: str,
+    system_prompt: str | None = None,
+) -> dict[str, Any]:
+    """Intent-aware validation. Returns verdict dict with verdict/passed/issues/reason/suggestion."""
+    val_prompt = system_prompt or _VALIDATION_PROMPT
+
+    # 1. Citation existence check (instant, no LLM)
+    valid_ids = {c.get("chunk_id", "") for c in effective_chunks}
+    bad_citations = [c for c in _extract_cited_ids(answer) if c not in valid_ids]
+    issues: list[str] = []
+    if bad_citations:
+        issues.append(f"Unresolved citations: {', '.join(bad_citations)}")
+
+    # 2. LLM grounding check with intent-specific rubric
+    if not isinstance(llm, FakeChatLLM):
+        from .generate_node import _format_chunks
+        intent = route.get("intent", "definition")
+        rubric = INTENT_RUBRICS.get(intent, _DEFAULT_RUBRIC)
+        question = route.get("rewritten_query", "") or ""
+        chunks_text = _format_chunks(effective_chunks[:4])
+
+        prompt_text = val_prompt.format(
+            intent=intent,
+            rubric=rubric,
+            question=question,
+            chunks=chunks_text,
+        )
+
+        messages = [
+            {"role": "system", "content": prompt_text},
+            {"role": "user", "content": f"Answer to validate:\n{answer}"},
+        ]
+        try:
+            result = llm.chat_json(messages, temperature=0)
+            verdict = result.get("verdict", "pass")
+            llm_passed = result.get("passed", True)
+            llm_issues = result.get("issues", [])
+            reason = result.get("reason", "")
+            suggestion = result.get("suggestion", "")
+
+            if isinstance(llm_issues, list):
+                issues.extend([i for i in llm_issues if isinstance(i, str)])
+
+            if verdict in ("warn", "fail") or not llm_passed:
+                effective_verdict = verdict if verdict in ("pass", "warn", "fail") else "warn"
+                return {
+                    "verdict": effective_verdict,
+                    "passed": effective_verdict == "pass",
+                    "issues": issues,
+                    "reason": reason,
+                    "suggestion": suggestion,
+                }
+        except Exception:
+            pass
+
+    # Citation issues only (no LLM ran or LLM returned pass)
+    if issues:
+        return {
+            "verdict": "warn",
+            "passed": False,
+            "issues": issues,
+            "reason": f"Citation issues found: {'; '.join(issues)}",
+            "suggestion": "Check that cited artifact/chunk IDs exist in the ingested corpus.",
+        }
+
+    return {"verdict": "pass", "passed": True, "issues": [], "reason": "", "suggestion": ""}
+
+
+def make_validation_node(llm: ChatLLM, system_prompt: str | None = None) -> Callable:
     """Return a LangGraph node that validates the generated answer."""
     use_llm = not isinstance(llm, FakeChatLLM)
 
@@ -49,33 +140,29 @@ def make_validation_node(llm: ChatLLM) -> Callable:
         effective = graded or fallback
 
         if not answer or not effective:
-            return {"validation_result": {"passed": True, "issues": []}}
+            return {"validation_result": {
+                "verdict": "pass", "passed": True, "issues": [], "reason": "", "suggestion": ""
+            }}
 
-        # 1. Citation existence check (instant, no LLM)
-        valid_ids = {c.get("chunk_id", "") for c in effective}
-        bad_citations = [c for c in _extract_cited_ids(answer) if c not in valid_ids]
-        issues: list[str] = []
-        if bad_citations:
-            issues.append(f"Unresolved citations: {', '.join(bad_citations)}")
+        # Skip LLM grounding for fallback answers (already disclaimed)
+        if state.get("is_fallback", False) or not use_llm:
+            # Still run citation check
+            valid_ids = {c.get("chunk_id", "") for c in effective}
+            bad = [c for c in _extract_cited_ids(answer) if c not in valid_ids]
+            if bad:
+                return {"validation_result": {
+                    "verdict": "warn",
+                    "passed": False,
+                    "issues": [f"Unresolved citations: {', '.join(bad)}"],
+                    "reason": "Unresolved citation references in answer.",
+                    "suggestion": "Check that cited artifact/chunk IDs exist in the ingested corpus.",
+                }}
+            return {"validation_result": {
+                "verdict": "pass", "passed": True, "issues": [], "reason": "", "suggestion": ""
+            }}
 
-        # 2. LLM grounding check — skip for fallback answers (already warned)
-        if use_llm and not state.get("is_fallback", False):
-            from .generate_node import _format_chunks
-            chunks_text = _format_chunks(effective[:4])
-            messages = [
-                {"role": "system", "content": GROUNDING_SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Answer to validate:\n{answer}\n\n"
-                    f"Knowledge chunks it was grounded in:\n{chunks_text}"
-                )},
-            ]
-            try:
-                result = llm.chat_json(messages, temperature=0)
-                if not result.get("passed", True):
-                    issues.extend(result.get("issues", []))
-            except Exception:
-                pass
-
-        return {"validation_result": {"passed": len(issues) == 0, "issues": issues}}
+        route = state.get("route", {})
+        result = validate_answer(llm, route, effective, answer, system_prompt=system_prompt)
+        return {"validation_result": result}
 
     return validation_node
