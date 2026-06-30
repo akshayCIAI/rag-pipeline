@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Version 0.7** — Working copy for Release 7 (2026-06-29)
+> **Version 0.7** — Working copy for Release 7 (2026-06-30)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -92,3 +92,12 @@ The mapping from `component_type` → which body list to chunk, which fields are
 - Pure-Python, dependency-light. The loader/chunker need no LLM. Modules degrade gracefully when optional deps (`openai`, `langgraph`, `azure-storage-blob`) or Azure creds are absent.
 - Per-service env var pattern: `AZURE_OPENAI_EMBEDDING_*` / `AZURE_OPENAI_CHAT_*` / `AZURE_BLOB_*`, each with fallback to shared prefix where applicable.
 - Sample artifacts in `artifacts/` are illustrative for format validation, **not approved knowledge** — the field *structure* is fixed by the standard; the data team replaces the values.
+
+## Documentation rule (MANDATORY)
+
+**Always update `CLAUDE.md` and `ciathena-poc/README.md` before every commit.**
+
+- `CLAUDE.md` — update the version header date, architecture section, and relevant module descriptions to reflect any new/modified modules or pipeline changes.
+- `README.md` — update the version header date, "Agentic RAG flow" diagram, "Streamlit demo" features list, "What this PoC covers" paragraph, and add a changelog entry for the new version.
+
+This rule applies to every code change, no matter how small. The two files must always reflect the current state of the codebase.

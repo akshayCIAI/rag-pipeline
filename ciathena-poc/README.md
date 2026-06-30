@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.7** — Working copy for Release 7 (2026-06-29)
+> **v0.7** — Working copy for Release 7 (2026-06-30)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -101,23 +101,41 @@ user_query
     │
     ▼
 1. ROUTER (LLM + routing catalog)
-   → in_domain? · usecase · component_type(s) · intent · rewritten_query
+   → in_domain? · usecase · component_type(s) · intent · rewritten_query · chroma_filter
+    │
+    ▼ (in_domain=false → decline immediately)
+2. EXPAND QUERIES (LLM)
+   → 3 semantically diverse query variations for wider recall
+   → skipped when FakeChatLLM (offline mode)
     │
     ▼
-2. RETRIEVE (persistent Chroma)
-   metadata pre-filter: usecase ∈ {chosen, General}   (OR-merge)
-                        review_status = "approved"     (governance)
-                        component_type ∈ chosen        (soft)
+3. RETRIEVE (persistent Chroma)
+   self-query: uses chroma_filter from router if present
+   else builds filter from: usecase ∈ {chosen, General}  (OR-merge)
+                             review_status = "approved"   (governance)
+                             component_type ∈ chosen      (soft)
+   multi-query: loops over all expanded queries, merges by chunk_id
     │
     ▼
-3. RERANK / DOCUMENT-FILTER
+4. RERANK / DOCUMENT-FILTER
    high-confidence chunks (cosine ≥ 0.7) auto-pass
+   score-gap skip: top-k returned directly when gap ≥ 0.1
    borderline chunks batch-graded in 1 LLM call → top-k
+   soft fallback: if no chunks clear threshold (0.15), returns
+                  fallback_chunks (best available low-score chunks)
     │
     ▼
-4. GENERATE (LLM, streamed)
+5. GENERATE (LLM, streamed)
    grounded answer + citations [artifact_id::chunk_id]
-   tokens stream to UI in real time; refuses when no approved context survives filtering
+   tokens stream to UI in real time
+   if fallback_chunks used: prepends ⚠️ disclaimer, sets is_fallback=True
+   refuses when neither graded nor fallback chunks available
+    │
+    ▼
+6. VALIDATION (chat.py only, not in streaming Streamlit path)
+   citation existence check: verifies [artifact::chunk] refs match context
+   LLM grounding check: flags claims not supported by provided chunks
+   sets validation_result = {"passed": bool, "issues": list}
 ```
 
 The router uses a **routing catalog** built at startup from artifact metadata
@@ -218,6 +236,9 @@ streamlit run app.py
 
 Features:
 - **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks; supports follow-up questions with conversation history (last 5 turns); persistent chat history survives page reloads via URL session ID; "New conversation" button starts a fresh session
+- **Feedback buttons** — 👍/👎 after every answer (current and historical); ratings persisted to `.chroma/feedback/` or blob; 3 dislikes on the same query automatically invalidates the Q&A cache
+- **Soft fallback display** — when no high-confidence chunks found, answer shows ⚠️ disclaimer; chunks expander shows "Fallback context" header with the low-score chunks used
+- **Routing debug expander** — shows usecase, intent, rewritten query, metadata filter (`chroma_filter`), and expanded query variations per response
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
@@ -295,20 +316,35 @@ built-in defaults when no blob copy exists.
 
 **Covers:** artifact parsing, validation, one-item-per-chunk chunking,
 embedding, persistent Chroma ingest, metadata pre-filtering (usecase +
-component_type + review_status), General-layer OR-merge, LLM query routing,
-LLM relevance grading, grounded answer generation with citations, graceful
-refusal on out-of-domain or no-context queries, smart re-ingestion with
-version tracking, Azure Blob Storage integration (versioned artifacts +
-prompt templates), auto-ingest on startup, LLM retry logic, blob-backed
-prompt management, streaming answer generation, conversation history with
-follow-up support, session-scoped Q&A caching, and Streamlit demo UI with
-artifact upload and prompt editor.
+component_type + review_status), General-layer OR-merge, LLM query routing
+with self-query metadata filter extraction, multi-query expansion (3
+variations per query), LLM relevance grading, intent-aware reranking, chunk
+deduplication, soft fallback retrieval (⚠️ disclaimer answers when no
+high-confidence chunks found), grounded answer generation with citations,
+output validation (citation existence + LLM grounding check), user feedback
+(👍/👎) with cache invalidation loop, graceful refusal on out-of-domain
+queries, smart re-ingestion with version tracking, Azure Blob Storage
+integration (versioned artifacts + prompt templates), auto-ingest on startup,
+LLM retry logic, blob-backed prompt management, streaming answer generation,
+conversation history with follow-up support, session-scoped Q&A caching, and
+Streamlit demo UI with artifact upload, prompt editor, and feedback buttons.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
 are later phases per the PoC plan.
 
 ## Changelog
+
+### v0.7 — Working copy for Release 7 (2026-06-30)
+
+- **Soft fallback retrieval** — when no chunks clear `COSINE_THRESHOLD` (0.15), `rerank_node` returns `fallback_chunks` (best available low-score chunks) instead of an empty result; `generate_node` uses them with a ⚠️ disclaimer prefix (`is_fallback=True`) rather than hard-declining; Streamlit chunks expander shows "Fallback context" header
+- **Multi-query retrieval** — new `query_expander_node` generates 3 semantically diverse query variations via LLM; `retrieval_node` loops over all queries and merges results by `chunk_id` (deduplication), increasing the candidate pool from ~10 to ~30–40 unique chunks before reranking; skips when `FakeChatLLM` (offline mode)
+- **Self-query metadata filtering** — router LLM now outputs a `chroma_filter` dict (e.g. `{"component_type": "playbook", "review_status": "approved"}`); `retrieval_node` uses it directly as the Chroma pre-filter when present, bypassing the default usecase/component_type logic; keys validated against known metadata fields before use
+- **Output validation** — new `validation_node` runs after `generate_node` in `build_agent_graph()` (used by `chat.py`): (1) citation existence check — flags `[artifact::chunk]` refs not in effective context (no LLM cost); (2) LLM grounding check — flags claims unsupported by provided chunks; sets `validation_result = {"passed": bool, "issues": list}`
+- **Feedback agent** — new `FeedbackStore` class (same blob/local pattern as `ChatHistoryStore`) persists thumbs up/down ratings per message; `should_invalidate_cache(query)` returns True after 3 negative ratings on the same query, triggering `QACache.invalidate()`; 👍/👎 buttons rendered in Streamlit for current and historical messages
+- **LangGraph topology updated** — full graph now: `route → expand_queries → retrieve → rerank → generate → validation`; `build_pre_generate_graph()` (Streamlit streaming): `route → expand_queries → retrieve → rerank`
+- **Routing debug improvements** — Streamlit routing expander now shows `chroma_filter` (when set) and expanded query variations per response
+- **3 new modules** — `ciathena_kb/query_expander_node.py`, `ciathena_kb/validation_node.py`, `ciathena_kb/feedback_store.py`
 
 ### v0.6 — Working copy for Release 6 (2026-06-28)
 
