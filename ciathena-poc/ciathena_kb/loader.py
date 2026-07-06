@@ -15,6 +15,8 @@ level, body keys alongside), we split them by a known set of envelope keys.
 from __future__ import annotations
 
 import pathlib
+import re
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,32 +87,102 @@ def _split_envelope_body(doc: dict[str, Any]) -> tuple[dict, dict]:
     return envelope, body
 
 
+# Only these two are structurally required — everything downstream reads the
+# rest via .get(...) with defaults. Newer artifact generations (e.g. the L1
+# knowledge files) legitimately omit fields like `usecase` / `embedding_model`
+# and introduce new `layer` / `component_type` values, so we accept-and-warn
+# instead of hard-rejecting. This keeps validation agnostic to the artifacts'
+# exact envelope keys.
+HARD_REQUIRED_KEYS = ("artifact_id", "component_type")
+RECOMMENDED_KEYS = (
+    "title", "usecase", "layer", "schema_version",
+    "content_version", "review_status", "embedding_model",
+)
+
+
 def _validate_envelope(env: dict[str, Any], path: str) -> None:
-    required = [
-        "artifact_id", "title", "component_type", "usecase", "layer",
-        "schema_version", "content_version", "review_status", "embedding_model",
-    ]
-    missing = [k for k in required if k not in env]
+    missing = [k for k in HARD_REQUIRED_KEYS if k not in env]
     if missing:
-        raise ArtifactError(f"{path}: missing envelope keys: {missing}")
-    if env["layer"] not in VALID_LAYERS:
-        raise ArtifactError(f"{path}: invalid layer '{env['layer']}'")
-    if env["component_type"] not in VALID_COMPONENT_TYPES:
-        raise ArtifactError(f"{path}: invalid component_type '{env['component_type']}'")
-    if env["review_status"] not in VALID_REVIEW_STATUS:
-        raise ArtifactError(f"{path}: invalid review_status '{env['review_status']}'")
+        raise ArtifactError(f"{path}: missing required envelope keys: {missing}")
+
+    soft_missing = [k for k in RECOMMENDED_KEYS if k not in env]
+    if soft_missing:
+        warnings.warn(
+            f"{path}: missing recommended envelope keys {soft_missing} "
+            f"(accepted; defaults will be used)"
+        )
+
+    # Controlled vocabularies are advisory, not gates: unknown values are
+    # accepted so new layers / component_types don't block ingestion.
+    for key, vocab in (
+        ("layer", VALID_LAYERS),
+        ("component_type", VALID_COMPONENT_TYPES),
+        ("review_status", VALID_REVIEW_STATUS),
+    ):
+        val = env.get(key)
+        if val is not None and val not in vocab:
+            warnings.warn(f"{path}: unrecognized {key} '{val}' (accepted anyway)")
+
+
+# ── YAML resilience ──────────────────────────────────────────────────────────
+# A common hand-authoring defect is a block-mapping colon with no following
+# space, e.g.  key:"value"  instead of  key: "value"  — PyYAML rejects this as a
+# scanner error. We do NOT rewrite well-formed files: _load_docs only attempts a
+# conservative, line-oriented repair AFTER a normal parse has already failed,
+# then retries once. Valid YAML is never touched; genuinely broken files still
+# raise and get reported as skipped.
+
+_MISSING_COLON_SPACE = re.compile(r'^(\s*)("?[^\s#][^:]*?"?):(?=\S)')
+_BLOCK_SCALAR_OPENER = re.compile(r':\s*[|>][+-]?\d*\s*(#.*)?$')
+
+
+def _repair_yaml_text(text: str) -> str:
+    """Insert the missing space after a *mapping* colon (`key:val` -> `key: val`).
+    Only the first colon on a line is a candidate. Comments, blank lines, and the
+    interior of literal/folded (`|` / `>`) block scalars are left byte-for-byte so
+    indentation-sensitive content is never altered."""
+    out: list[str] = []
+    block_indent: int | None = None
+    for raw in text.split("\n"):
+        stripped = raw.lstrip(" ")
+        indent = len(raw) - len(stripped)
+        if block_indent is not None:  # inside a literal/folded block scalar
+            if stripped == "" or indent > block_indent:
+                out.append(raw)
+                continue
+            block_indent = None  # dedented -> block scalar ended
+        if stripped == "" or stripped.startswith("#"):
+            out.append(raw)
+            continue
+        fixed = _MISSING_COLON_SPACE.sub(r'\1\2: ', raw)
+        out.append(fixed)
+        if _BLOCK_SCALAR_OPENER.search(fixed):
+            block_indent = indent
+    return "\n".join(out)
+
+
+def _load_docs(text: str, source: str) -> list[dict]:
+    """Parse a YAML stream into dict docs, with one repair-and-retry on error.
+
+    Artifacts may use a '---' line to visually separate envelope from body; YAML
+    treats that as a document separator, so callers merge the returned docs into
+    one mapping (envelope keys + body keys coexist).
+    """
+    try:
+        raw_docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError:
+        raw_docs = list(yaml.safe_load_all(_repair_yaml_text(text)))
+    docs = [d for d in raw_docs if isinstance(d, dict)]
+    if not docs:
+        raise ArtifactError(f"{source}: no YAML mapping found")
+    return docs
 
 
 def load_artifact(path: str | pathlib.Path) -> Artifact:
     """Load and validate a single artifact YAML file."""
     path = pathlib.Path(path)
-    with path.open("r", encoding="utf-8") as fh:
-        # Artifacts may use a '---' line to visually separate envelope from
-        # body. YAML treats that as a document separator, so merge all docs
-        # in the stream into one mapping (envelope keys + body keys coexist).
-        docs = [d for d in yaml.safe_load_all(fh) if isinstance(d, dict)]
-    if not docs:
-        raise ArtifactError(f"{path}: no YAML mapping found")
+    text = pathlib.Path(path).read_text(encoding="utf-8")
+    docs = _load_docs(text, str(path))
     doc: dict[str, Any] = {}
     for d in docs:
         doc.update(d)
@@ -122,9 +194,7 @@ def load_artifact(path: str | pathlib.Path) -> Artifact:
 def load_artifact_from_bytes(data: bytes, source_name: str) -> Artifact:
     """Parse and validate an artifact from raw YAML bytes (e.g. from blob storage)."""
     text = data.decode("utf-8")
-    docs = [d for d in yaml.safe_load_all(text) if isinstance(d, dict)]
-    if not docs:
-        raise ArtifactError(f"{source_name}: no YAML mapping found")
+    docs = _load_docs(text, source_name)
     doc: dict[str, Any] = {}
     for d in docs:
         doc.update(d)

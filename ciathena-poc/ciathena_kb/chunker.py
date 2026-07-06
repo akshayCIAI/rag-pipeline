@@ -87,38 +87,76 @@ def _scalar_meta(envelope: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
+# Conventional list-key names, tried in order when a component_type is not in
+# LIST_KEY_BY_TYPE (new artifact generations may use a type we don't map yet).
+_PREFERRED_LIST_KEYS = (
+    "concepts", "steps", "mappings", "rules", "scenarios", "signals", "datasets",
+)
+
+
+def _detect_list_key(body: dict[str, Any]) -> str | None:
+    """Fallback list-key resolution: the body key holding a non-empty list of
+    dict items (preferring the conventional names above, else the largest)."""
+    candidates = {
+        k: v for k, v in body.items()
+        if isinstance(v, list) and v and any(isinstance(i, dict) for i in v)
+    }
+    for name in _PREFERRED_LIST_KEYS:
+        if name in candidates:
+            return name
+    if candidates:
+        return max(candidates, key=lambda k: len(candidates[k]))
+    return None
+
+
+def _detect_id_field(ctype: str, item: dict[str, Any]) -> str:
+    if ctype in ITEM_ID_FIELD:
+        return ITEM_ID_FIELD[ctype]
+    for k in item:  # first `*_id` field wins, else fall back to positional index
+        if k.endswith("_id"):
+            return k
+    return "id"
+
+
 def chunk_artifact(artifact: Artifact) -> list[Chunk]:
     ctype = artifact.component_type
     if artifact.is_whole_doc:
         return []  # not embedded for retrieval
 
-    list_key = artifact.list_key
+    # Known types use their explicit list key; unknown types auto-detect.
+    list_key = artifact.list_key or _detect_list_key(artifact.body)
     if not list_key or list_key not in artifact.body:
         return []
     items = artifact.body[list_key] or []
 
     base_meta = _scalar_meta(artifact.envelope)
+    known_type = ctype in TEXT_FIELDS
     text_fields = TEXT_FIELDS.get(ctype, [])
     recall_fields = RECALL_FIELDS.get(ctype, [])
-    id_field = ITEM_ID_FIELD.get(ctype, "id")
 
     chunks: list[Chunk] = []
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             continue
-        item_id = str(item.get(id_field, idx))
+        item_id = str(item.get(_detect_id_field(ctype, item), idx))
         chunk_id = f"{artifact.artifact_id}::{item_id}"
 
         parts: list[str] = []
-        for f in text_fields:
-            txt = _flatten(item.get(f))
-            if txt:
-                parts.append(txt)
-        # recall boosters appended so similarity matches user phrasing
-        for f in recall_fields:
-            txt = _flatten(item.get(f))
-            if txt:
-                parts.append(txt)
+        if known_type:
+            # curated field order (human text first, then recall boosters)
+            for f in text_fields + recall_fields:
+                txt = _flatten(item.get(f))
+                if txt:
+                    parts.append(txt)
+        else:
+            # Unknown component_type: embed every non-id field so the item stays
+            # retrievable without needing a per-type field map.
+            for k, v in item.items():
+                if k.endswith("_id"):
+                    continue
+                txt = _flatten(v)
+                if txt:
+                    parts.append(txt)
         text = "\n".join(parts).strip()
         if not text:
             continue
