@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **Version 0.8** — Working copy for Release 8 (2026-06-30)
+> **Version 0.8** — Working copy for Release 8 (2026-07-10)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -51,7 +51,7 @@ The agentic RAG pipeline has six stages assembled as a LangGraph in `agent_graph
 route → expand_queries → retrieve → rerank (or skip) → generate → validation
 ```
 
-Performance optimizations: conditional rerank bypass (skips LLM call when all top-k chunks have cosine >= 0.7 or score gap >= 0.1), compact routing catalog (merged triggers, truncated covers), embedding LRU cache (512 entries, avoids redundant Azure API calls), and progressive `st.status()` updates during pipeline execution.
+Performance optimizations: conditional rerank bypass (skips LLM call when all top-k chunks have cosine >= 0.7 or score gap >= 0.1), compact routing catalog (merged triggers, truncated covers), embedding LRU cache (512 entries, avoids redundant Azure API calls), progressive `st.status()` updates during pipeline execution, and **startup blob-skip** (when the store already has chunks, `load_and_ensure_ingested()` skips the expensive full-blob re-download; artifact metadata is cached in `st.session_state["_cached_artifacts"]` so the routing catalog rebuilds without network I/O).
 
 Retrieval quality: intent-aware reranking (router's intent boosts matching component_types — definition→concept/methodology, advisory→playbook/process_flow), chunk deduplication (max 2 chunks per artifact_id for diverse context), multi-query expansion (3 query variations increase recall), self-query metadata filtering (router outputs `chroma_filter` dict validated against known keys).
 

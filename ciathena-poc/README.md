@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.8** — Working copy for Release 8 (2026-06-30)
+> **v0.8** — Working copy for Release 8 (2026-07-10)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma

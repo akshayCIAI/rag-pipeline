@@ -199,7 +199,14 @@ def _smart_ingest_artifact(artifact, data_bytes, store, log, embedder, file_hash
 
 
 def load_and_ensure_ingested():
-    """Load artifacts from blob/local and smart-ingest on startup."""
+    """Load artifacts from blob/local and smart-ingest on startup.
+
+    Optimization: if the store already has chunks (from a previous run in this
+    session), skip the expensive blob re-download and re-check.  The full
+    blob scan only runs on cold start (store empty) or after explicit
+    "Re-ingest all".  Individual uploads are ingested inline and don't
+    trigger a full re-scan.
+    """
     blob = get_blob()
     embedder = get_embedder_cached()
     store = get_store_cached()
@@ -207,43 +214,59 @@ def load_and_ensure_ingested():
     pm = get_prompt_manager()
 
     skipped_files: list[tuple[str, str]] = []
+    already_loaded = store.count() > 0
 
     if blob:
-        blob_names = blob.list_artifacts()
-        artifacts = []
-        ingested_count = 0
-        skipped_count = 0
-        total_chunks = 0
+        if already_loaded:
+            artifacts = st.session_state.get("_cached_artifacts", [])
+            if not artifacts:
+                blob_names = blob.list_artifacts()
+                for name in blob_names:
+                    data = blob.download(name)
+                    uri = f"blob://{blob.container_name}/artifacts/{name}"
+                    try:
+                        artifact = load_artifact_from_bytes(data, source_name=uri)
+                    except Exception:
+                        continue
+                    artifacts.append(artifact)
+                st.session_state["_cached_artifacts"] = artifacts
+        else:
+            blob_names = blob.list_artifacts()
+            artifacts = []
+            ingested_count = 0
+            skipped_count = 0
+            total_chunks = 0
 
-        for name in blob_names:
-            data = blob.download(name)
-            uri = f"blob://{blob.container_name}/artifacts/{name}"
-            try:
-                artifact = load_artifact_from_bytes(data, source_name=uri)
-            except Exception as e:
-                print(f"  Skipping {name}: {e}")
-                skipped_files.append((name, str(e)))
-                continue
+            for name in blob_names:
+                data = blob.download(name)
+                uri = f"blob://{blob.container_name}/artifacts/{name}"
+                try:
+                    artifact = load_artifact_from_bytes(data, source_name=uri)
+                except Exception as e:
+                    print(f"  Skipping {name}: {e}")
+                    skipped_files.append((name, str(e)))
+                    continue
 
-            artifacts.append(artifact)
+                artifacts.append(artifact)
 
-            ingested, n_chunks = _smart_ingest_artifact(
-                artifact, data, store, log, embedder,
-                file_hash=_bytes_hash(data),
-            )
-            if ingested:
-                ingested_count += 1
-                total_chunks += n_chunks
-            else:
-                skipped_count += 1
+                ingested, n_chunks = _smart_ingest_artifact(
+                    artifact, data, store, log, embedder,
+                    file_hash=_bytes_hash(data),
+                )
+                if ingested:
+                    ingested_count += 1
+                    total_chunks += n_chunks
+                else:
+                    skipped_count += 1
 
-        if ingested_count > 0:
-            print(f"  Auto-ingest: {ingested_count} new/changed, {skipped_count} unchanged, {total_chunks} chunks embedded")
-        elif blob_names:
-            print(f"  Auto-ingest: all {skipped_count} artifacts unchanged, 0 embeddings needed")
+            if ingested_count > 0:
+                print(f"  Auto-ingest: {ingested_count} new/changed, {skipped_count} unchanged, {total_chunks} chunks embedded")
+            elif blob_names:
+                print(f"  Auto-ingest: all {skipped_count} artifacts unchanged, 0 embeddings needed")
+            st.session_state["_cached_artifacts"] = artifacts
     else:
         artifacts = load_artifacts(ARTIFACTS_DIR)
-        if store.count() == 0:
+        if not already_loaded:
             for a in artifacts:
                 chunks = chunk_artifact(a)
                 if chunks:
@@ -389,14 +412,13 @@ with st.sidebar:
                 st.error(f"**Error:** {e}", icon="❌")
 
         get_qa_cache().invalidate()
-        st.cache_resource.clear()
-        st.rerun()
 
     # ---- RE-INGEST ALL ----
     if st.button("Re-ingest all artifacts", use_container_width=True):
         store.clear()
         log.clear()
         get_qa_cache().invalidate()
+        st.session_state.pop("_cached_artifacts", None)
 
         reingest_skipped = []
         if blob:
@@ -492,14 +514,12 @@ with st.sidebar:
                     pm.save(key, edited)
                     get_qa_cache().invalidate()
                     st.success("Saved! Pipeline will use the updated prompt.", icon="✅")
-                    st.cache_resource.clear()
                     st.rerun()
             with col_reset:
                 if st.button("Reset to default", key=f"reset_{key}", use_container_width=True):
                     pm.save(key, default_val)
                     get_qa_cache().invalidate()
                     st.success("Reset to default.", icon="🔄")
-                    st.cache_resource.clear()
                     st.rerun()
 
     st.divider()
