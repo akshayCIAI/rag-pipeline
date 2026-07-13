@@ -17,6 +17,7 @@ class AgentState(TypedDict, total=False):
     # inputs
     user_query: str
     conversation_history: list[dict[str, str]]
+    base_model_enabled: bool  # toggle: answer ungrounded in-domain queries from base model
     # set by router
     route: dict[str, Any]
     # set by query expander
@@ -31,6 +32,7 @@ class AgentState(TypedDict, total=False):
     answer: str
     citations: list[str]
     is_fallback: bool
+    is_base_model: bool
     # set by validation
     validation_result: dict[str, Any]
 
