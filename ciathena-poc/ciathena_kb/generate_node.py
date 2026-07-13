@@ -34,6 +34,26 @@ BASE_MODEL_DISCLAIMER = (
     "carries no citations. Verify with your data team before acting.*\n\n"
 )
 
+# Appended to the grounded system prompt when the base-model fallback is ON, so
+# the model can FILL GAPS the chunks don't cover (e.g. one side of a comparison)
+# with clearly-labelled general knowledge instead of only saying "not available".
+AUGMENTATION_CLAUSE = """
+
+── GAP-FILLING (base-model fallback is ON) ──
+The knowledge chunks above may not cover every part of the question. This AMENDS
+rule 1: for aspects the chunks do NOT cover, you MAY use your own general
+pharma / life-sciences knowledge to give a genuinely useful answer instead of
+only writing "not available in provided chunks".
+STRICT REQUIREMENTS when you do this:
+- Cite chunks with [artifact_id::chunk_item_id] for every claim taken FROM the chunks.
+- Clearly mark every general-knowledge addition. In prose, prefix it with
+  "🧠 (general knowledge):". In a table cell, write "🧠 general knowledge" —
+  never a fabricated citation.
+- NEVER contradict the chunks, and NEVER invent citations, client names, or
+  specific numeric figures (thresholds, decay rates, dollar amounts).
+- Prefer grounded content; use general knowledge only to fill genuine gaps.
+"""
+
 
 def base_model_fallback_default() -> bool:
     """Default toggle for callers without a UI (e.g. chat.py). Overridable per
@@ -74,6 +94,7 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None,
         route = state.get("route", {})
         user_query = state.get("user_query", "")
         graded = state.get("graded_chunks", [])
+        base_enabled = state.get("base_model_enabled", base_model_fallback_default())
 
         if not route.get("in_domain", True):
             return {"answer": NO_CONTEXT_RESPONSE, "citations": [], "is_fallback": False,
@@ -83,7 +104,6 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None,
             # In-domain but nothing relevant retrieved. If the base-model fallback
             # is enabled, answer from the LLM's own general pharma knowledge
             # (closed-book, uncited, disclaimed); otherwise decline.
-            base_enabled = state.get("base_model_enabled", base_model_fallback_default())
             if base_enabled:
                 intent = route.get("intent", "definition")
                 messages = _base_model_messages(
@@ -98,10 +118,10 @@ def make_generate_node(llm: ChatLLM, system_prompt: str | None = None,
         intent = route.get("intent", "definition")
         chunks_text = _format_chunks(graded)
 
-        messages = [
-            {"role": "system", "content": gen_prompt.format(
-                intent=intent, chunks=chunks_text)},
-        ]
+        system_content = gen_prompt.format(intent=intent, chunks=chunks_text)
+        if base_enabled:  # allow labelled general-knowledge gap-filling
+            system_content += AUGMENTATION_CLAUSE
+        messages = [{"role": "system", "content": system_content}]
         history = state.get("conversation_history", [])
         if history:
             messages.extend(history)
@@ -134,11 +154,11 @@ def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None,
             yield NO_CONTEXT_RESPONSE
             return
 
+        enabled = base_model_fallback_default() if base_model_enabled is None else base_model_enabled
         effective = graded_chunks or []
 
         if not effective:
             # In-domain but nothing relevant retrieved → base-model fallback or decline.
-            enabled = base_model_fallback_default() if base_model_enabled is None else base_model_enabled
             if not enabled:
                 yield NO_CONTEXT_RESPONSE
                 return
@@ -151,10 +171,10 @@ def make_stream_generate(llm: ChatLLM, system_prompt: str | None = None,
         intent = route.get("intent", "definition")
         chunks_text = _format_chunks(effective)
 
-        messages = [
-            {"role": "system", "content": gen_prompt.format(
-                intent=intent, chunks=chunks_text)},
-        ]
+        system_content = gen_prompt.format(intent=intent, chunks=chunks_text)
+        if enabled:  # allow labelled general-knowledge gap-filling for uncovered parts
+            system_content += AUGMENTATION_CLAUSE
+        messages = [{"role": "system", "content": system_content}]
         if conversation_history:
             messages.extend(conversation_history)
         messages.append({"role": "user", "content": user_query})
