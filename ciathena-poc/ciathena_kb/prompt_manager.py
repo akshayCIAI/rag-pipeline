@@ -138,6 +138,10 @@ in the knowledge chunks provided.
 Guidelines:
 - Minor paraphrasing and inference from stated facts are acceptable.
 - Only flag clear hallucinations or claims that directly contradict the chunks.
+- Content explicitly marked "🧠 (general knowledge)" or "🧠 general knowledge" is
+  intentional, disclosed base-model gap-filling — do NOT flag it as unsupported
+  or hallucinated. Only evaluate the chunk-cited claims for grounding. Still fail
+  if any 🧠-marked content directly CONTRADICTS a chunk.
 - A "warn" verdict means the answer is mostly correct but has gaps for the stated intent.
 - A "fail" verdict means the answer makes claims that contradict the chunks.
 - If the answer is short or only restates chunk content, it almost certainly passes.
