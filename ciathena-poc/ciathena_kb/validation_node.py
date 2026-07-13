@@ -165,7 +165,8 @@ def make_validation_node(llm: ChatLLM, system_prompt: str | None = None) -> Call
         fallback = state.get("fallback_chunks", [])
         effective = graded or fallback
 
-        if not answer or not effective:
+        # Base-model answers have no chunks to ground against — already disclaimed.
+        if state.get("is_base_model", False) or not answer or not effective:
             return {"validation_result": {
                 "verdict": "pass", "passed": True, "issues": [], "reason": "", "suggestion": ""
             }}
