@@ -47,6 +47,7 @@ from ciathena_kb import (
 from ciathena_kb.llm import FakeChatLLM
 from ciathena_kb.embedder import FakeHashEmbedder
 from ciathena_kb.ingestion_log import _bytes_hash
+from ciathena_kb.generate_node import BASE_MODEL_DISCLAIMER
 
 ARTIFACTS_DIR = pathlib.Path(__file__).parent / "artifacts"
 MAX_HISTORY_TURNS = int(os.environ.get("HISTORY_MAX_TURNS", "5"))
@@ -199,14 +200,7 @@ def _smart_ingest_artifact(artifact, data_bytes, store, log, embedder, file_hash
 
 
 def load_and_ensure_ingested():
-    """Load artifacts from blob/local and smart-ingest on startup.
-
-    Optimization: if the store already has chunks (from a previous run in this
-    session), skip the expensive blob re-download and re-check.  The full
-    blob scan only runs on cold start (store empty) or after explicit
-    "Re-ingest all".  Individual uploads are ingested inline and don't
-    trigger a full re-scan.
-    """
+    """Load artifacts from blob/local and smart-ingest on startup."""
     blob = get_blob()
     embedder = get_embedder_cached()
     store = get_store_cached()
@@ -214,59 +208,43 @@ def load_and_ensure_ingested():
     pm = get_prompt_manager()
 
     skipped_files: list[tuple[str, str]] = []
-    already_loaded = store.count() > 0
 
     if blob:
-        if already_loaded:
-            artifacts = st.session_state.get("_cached_artifacts", [])
-            if not artifacts:
-                blob_names = blob.list_artifacts()
-                for name in blob_names:
-                    data = blob.download(name)
-                    uri = f"blob://{blob.container_name}/artifacts/{name}"
-                    try:
-                        artifact = load_artifact_from_bytes(data, source_name=uri)
-                    except Exception:
-                        continue
-                    artifacts.append(artifact)
-                st.session_state["_cached_artifacts"] = artifacts
-        else:
-            blob_names = blob.list_artifacts()
-            artifacts = []
-            ingested_count = 0
-            skipped_count = 0
-            total_chunks = 0
+        blob_names = blob.list_artifacts()
+        artifacts = []
+        ingested_count = 0
+        skipped_count = 0
+        total_chunks = 0
 
-            for name in blob_names:
-                data = blob.download(name)
-                uri = f"blob://{blob.container_name}/artifacts/{name}"
-                try:
-                    artifact = load_artifact_from_bytes(data, source_name=uri)
-                except Exception as e:
-                    print(f"  Skipping {name}: {e}")
-                    skipped_files.append((name, str(e)))
-                    continue
+        for name in blob_names:
+            data = blob.download(name)
+            uri = f"blob://{blob.container_name}/artifacts/{name}"
+            try:
+                artifact = load_artifact_from_bytes(data, source_name=uri)
+            except Exception as e:
+                print(f"  Skipping {name}: {e}")
+                skipped_files.append((name, str(e)))
+                continue
 
-                artifacts.append(artifact)
+            artifacts.append(artifact)
 
-                ingested, n_chunks = _smart_ingest_artifact(
-                    artifact, data, store, log, embedder,
-                    file_hash=_bytes_hash(data),
-                )
-                if ingested:
-                    ingested_count += 1
-                    total_chunks += n_chunks
-                else:
-                    skipped_count += 1
+            ingested, n_chunks = _smart_ingest_artifact(
+                artifact, data, store, log, embedder,
+                file_hash=_bytes_hash(data),
+            )
+            if ingested:
+                ingested_count += 1
+                total_chunks += n_chunks
+            else:
+                skipped_count += 1
 
-            if ingested_count > 0:
-                print(f"  Auto-ingest: {ingested_count} new/changed, {skipped_count} unchanged, {total_chunks} chunks embedded")
-            elif blob_names:
-                print(f"  Auto-ingest: all {skipped_count} artifacts unchanged, 0 embeddings needed")
-            st.session_state["_cached_artifacts"] = artifacts
+        if ingested_count > 0:
+            print(f"  Auto-ingest: {ingested_count} new/changed, {skipped_count} unchanged, {total_chunks} chunks embedded")
+        elif blob_names:
+            print(f"  Auto-ingest: all {skipped_count} artifacts unchanged, 0 embeddings needed")
     else:
         artifacts = load_artifacts(ARTIFACTS_DIR)
-        if not already_loaded:
+        if store.count() == 0:
             for a in artifacts:
                 chunks = chunk_artifact(a)
                 if chunks:
@@ -278,7 +256,9 @@ def load_and_ensure_ingested():
     prompts = {key: pm.get(key) for key in pm.all_keys}
     llm = get_llm_cached()
     pre_graph = build_pre_generate_graph(store=store, artifacts=artifacts, llm=llm, prompts=prompts)
-    stream_gen = make_stream_generate(llm, system_prompt=prompts.get("generate_system"))
+    stream_gen = make_stream_generate(
+        llm, system_prompt=prompts.get("generate_system"),
+        base_model_prompt=prompts.get("base_model_system"))
     return artifacts, pre_graph, stream_gen
 
 
@@ -341,6 +321,26 @@ with st.sidebar:
     _cs = _cache.stats
     st.caption(f"Cache: **{_cs['entries']}** entries, **{_cs['hits']}** hits / **{_cs['misses']}** misses")
     st.caption(f"Session: `{_get_session_id()}`")
+
+    st.divider()
+
+    # ---- ANSWERING MODE ----
+    st.subheader("Answering mode")
+    base_model_enabled = st.toggle(
+        "🧠 Base-model fallback",
+        value=st.session_state.get("base_model_enabled", True),
+        key="base_model_enabled",
+        help=(
+            "When ON: if a question is in the pharma domain but no approved "
+            "knowledge is found, answer from the base model's general knowledge "
+            "(clearly labelled, no citations). When OFF: the assistant declines "
+            "instead of guessing."
+        ),
+    )
+    if base_model_enabled:
+        st.caption("🧠 Ungrounded pharma questions → base model (labelled).")
+    else:
+        st.caption("🔒 Strict: ungrounded questions are declined.")
 
     if st.button("New conversation", use_container_width=True, type="primary"):
         old_sid = _get_session_id()
@@ -412,13 +412,14 @@ with st.sidebar:
                 st.error(f"**Error:** {e}", icon="❌")
 
         get_qa_cache().invalidate()
+        st.cache_resource.clear()
+        st.rerun()
 
     # ---- RE-INGEST ALL ----
     if st.button("Re-ingest all artifacts", use_container_width=True):
         store.clear()
         log.clear()
         get_qa_cache().invalidate()
-        st.session_state.pop("_cached_artifacts", None)
 
         reingest_skipped = []
         if blob:
@@ -514,12 +515,14 @@ with st.sidebar:
                     pm.save(key, edited)
                     get_qa_cache().invalidate()
                     st.success("Saved! Pipeline will use the updated prompt.", icon="✅")
+                    st.cache_resource.clear()
                     st.rerun()
             with col_reset:
                 if st.button("Reset to default", key=f"reset_{key}", use_container_width=True):
                     pm.save(key, default_val)
                     get_qa_cache().invalidate()
                     st.success("Reset to default.", icon="🔄")
+                    st.cache_resource.clear()
                     st.rerun()
 
     st.divider()
@@ -588,11 +591,14 @@ if query:
 
         fallback_chunks: list = []
         expanded_queries_display: list = []
+        is_base_model = False
         if cached:
             route = cached.route
             graded = cached.graded_chunks
             answer = cached.answer
             citations = cached.citations
+            # Base-model answers are unambiguously prefixed with the disclaimer.
+            is_base_model = isinstance(answer, str) and answer.startswith(BASE_MODEL_DISCLAIMER)
             st.markdown(answer)
             elapsed = time.time() - start
         else:
@@ -641,7 +647,11 @@ if query:
 
             try:
                 answer = st.write_stream(
-                    stream_gen(route, graded, query, conversation_history=history, fallback_chunks=fallback_chunks)
+                    stream_gen(
+                        route, graded, query,
+                        conversation_history=history,
+                        base_model_enabled=st.session_state.get("base_model_enabled", True),
+                    )
                 )
             except Exception as e:
                 elapsed = time.time() - start
@@ -663,12 +673,13 @@ if query:
                 st.stop()
 
             elapsed = time.time() - start
-            effective_chunks = graded or fallback_chunks
+            # Base-model fallback fired iff the streamed answer carries the disclaimer.
+            is_base_model = isinstance(answer, str) and answer.startswith(BASE_MODEL_DISCLAIMER)
+            effective_chunks = graded  # base-model answers are uncited by design
             citations = sorted({c.get("chunk_id", "") for c in effective_chunks if c.get("chunk_id")})
 
-            # Intent-aware validation — skip for fallback answers and offline mode
-            _is_fallback_answer = not graded and bool(fallback_chunks)
-            if not _is_fallback_answer and not isinstance(llm, FakeChatLLM) and effective_chunks:
+            # Intent-aware validation — skip for base-model answers and offline mode
+            if not is_base_model and not isinstance(llm, FakeChatLLM) and effective_chunks:
                 _val = validate_answer(
                     llm, route, effective_chunks, answer,
                     system_prompt=pm.get("validation_grounding"),
@@ -688,7 +699,9 @@ if query:
             if not is_followup_query(query):
                 qa_cache.put(query, route, graded, answer, citations)
 
-        if citations:
+        if is_base_model:
+            st.caption("🧠 Source: **base model** (general knowledge — not governed/approved artifacts)")
+        elif citations:
             citation_text = ", ".join(f"`{c}`" for c in citations)
             st.caption(f"📎 Citations: {citation_text}")
 
@@ -715,11 +728,19 @@ if query:
                 st.markdown(route_md)
 
         chunks_md = ""
-        display_chunks = graded if graded else (fallback_chunks if not cached else [])
-        is_fallback_display = not graded and bool(display_chunks)
+        # For base-model answers, show the closest retrieved chunks as diagnostics
+        # (they were below the relevance threshold and NOT used in the answer).
+        if graded:
+            display_chunks = graded
+        elif is_base_model and not cached:
+            display_chunks = fallback_chunks
+        else:
+            display_chunks = []
         if display_chunks:
-            if is_fallback_display:
-                chunks_md = "⚠️ **Fallback context** — no high-confidence chunks found; showing closest matches:\n\n"
+            if not graded:
+                chunks_md = ("🧠 **Answered from base model** — the chunks below were "
+                             "retrieved but fell below the relevance threshold and were "
+                             "NOT used in the answer:\n\n")
             for i, c in enumerate(display_chunks, 1):
                 score = c.get("score", 0)
                 cid = c.get("chunk_id", "")
