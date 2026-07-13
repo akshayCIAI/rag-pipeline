@@ -68,7 +68,9 @@ def build_agent_graph(
     expander = make_query_expander_node(llm, system_prompt=p.get("query_expander"))
     retriever = make_retrieval_node(store, candidate_pool=pool)
     reranker = make_rerank_node(llm, top_k=k, system_prompt=p.get("rerank_grading"))
-    generator = make_generate_node(llm, system_prompt=p.get("generate_system"))
+    generator = make_generate_node(
+        llm, system_prompt=p.get("generate_system"),
+        base_model_prompt=p.get("base_model_system"))
     validator = make_validation_node(llm, system_prompt=p.get("validation_grounding"))
 
     decline_node = lambda state: {
