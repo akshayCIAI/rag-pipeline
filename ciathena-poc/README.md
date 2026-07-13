@@ -1,6 +1,6 @@
 # ciATHENA Knowledge Spine — Domain Intelligence Agent (Scenario B)
 
-> **v0.8** — Working copy for Release 8 (2026-07-10)
+> **v0.8** — Working copy for Release 8 (2026-06-30)
 
 An agentic RAG pipeline for the ciATHENA Knowledge Spine: load governed YAML
 artifacts, embed, ingest into a local Chroma vector DB, and answer pharma
@@ -25,8 +25,8 @@ ciathena-poc/
     catalog.py              # builds routing catalog from artifact metadata
     router_node.py          # LLM query router (infers usecase, component_type, intent)
     retrieval_node.py       # LangGraph retrieval node (metadata pre-filter + General OR-merge)
-    rerank_node.py          # post-retrieval relevance grading + threshold; soft fallback when no chunks clear threshold
-    generate_node.py        # grounded answer generation with citations; fallback generation with ⚠️ disclaimer
+    rerank_node.py          # post-retrieval relevance grading + threshold
+    generate_node.py        # grounded answer generation with citations; base-model fallback (🧠 disclaimer) for ungrounded in-domain queries
     query_expander_node.py  # LLM generates 3 query variations for multi-query retrieval
     validation_node.py      # citation existence check + LLM grounding check after generation
     agent_graph.py          # LangGraph: route → expand_queries → retrieve → rerank → generate → validation
@@ -121,15 +121,18 @@ user_query
    high-confidence chunks (cosine ≥ 0.7) auto-pass
    score-gap skip: top-k returned directly when gap ≥ 0.1
    borderline chunks batch-graded in 1 LLM call → top-k
-   soft fallback: if no chunks clear threshold (0.15), returns
-                  fallback_chunks (best available low-score chunks)
+   no chunk clears threshold (0.15) → graded_chunks empty
     │
     ▼
 5. GENERATE (LLM, streamed)
    grounded answer + citations [artifact_id::chunk_id]
    tokens stream to UI in real time
-   if fallback_chunks used: prepends ⚠️ disclaimer, sets is_fallback=True
-   refuses when neither graded nor fallback chunks available
+   if graded_chunks empty AND in_domain:
+      · base-model fallback ON  → answer from base LLM's own pharma
+                                   knowledge, 🧠 disclaimer, no citations,
+                                   is_base_model=True
+      · base-model fallback OFF → decline (grounded-or-decline)
+   (toggle: Streamlit sidebar "Base-model fallback" / ENABLE_BASE_MODEL_FALLBACK)
     │
     ▼
 6. INTENT-AWARE VALIDATION
@@ -240,12 +243,12 @@ streamlit run app.py
 Features:
 - **Chat interface** — ask questions, see answers streamed in real time with citations, routing details, and retrieved chunks; supports follow-up questions with conversation history (last 5 turns); persistent chat history survives page reloads via URL session ID; "New conversation" button starts a fresh session
 - **Feedback buttons** — 👍/👎 after every answer (current and historical); ratings persisted to `.chroma/feedback/` or blob; 3 dislikes on the same query automatically invalidates the Q&A cache
-- **Soft fallback display** — when no high-confidence chunks found, answer shows ⚠️ disclaimer; chunks expander shows "Fallback context" header with the low-score chunks used
+- **Base-model fallback toggle** — sidebar "🧠 Base-model fallback" switch. ON: in-domain questions with no approved knowledge are answered from the base model's own general knowledge, clearly labelled ("Source: base model") with a 🧠 disclaimer and no citations; the retrieved-chunks expander notes those chunks were below threshold and NOT used. OFF: strict grounded-or-decline (ungrounded in-domain questions are declined)
 - **Routing debug expander** — shows usecase, intent, rewritten query, metadata filter (`chroma_filter`), and expanded query variations per response
 - **Upload artifacts** — drag-and-drop `.yml`/`.yaml` files in the sidebar; auto-validates and smart-ingests (skips unchanged, only embeds new/modified)
 - **Auto-ingest on startup** — pulls all artifacts from blob on boot, compares hashes, only embeds what changed (saves embedding cost)
 - **Re-ingest all** — one-click wipe + re-ingest from the sidebar
-- **Prompt management** — all 5 pipeline prompts (router, rerank, generate, query expander, validation grounding) editable directly in the sidebar; saves to blob so changes persist without redeploying
+- **Prompt management** — all 6 pipeline prompts (router, rerank, generate, query expander, validation grounding, base-model fallback) editable directly in the sidebar; saves to blob so changes persist without redeploying
 - **Ingestion log** — expandable entries showing version, type, layer, chunk count, hash, source (blob/local), timestamp
 - **Status panel** — shows embedder/LLM/blob connection status, model names, storage mode, chunk count
 - **Graceful error handling** — shows friendly message when Azure is temporarily unavailable instead of crashing
@@ -271,12 +274,13 @@ ciathena-artifacts/           # container
       20260625_091500_gen-concept-pharma-001.yml
     mmm-methodology-core-001.yml/
       20260625_043000_mmm-methodology-core-001.yml
-  prompts/                    # editable prompt templates (all 5)
+  prompts/                    # editable prompt templates (all 6)
     router_system.txt
     rerank_grading.txt
     generate_system.txt
     query_expander.txt
     validation_grounding.txt
+    base_model_system.txt
 ```
 
 Every upload saves the file under `artifacts/` (the "current" copy used for ingestion) and
@@ -290,7 +294,7 @@ compares hashes — only new or changed artifacts are embedded, saving Azure Ope
 
 ## Prompt management
 
-All 5 pipeline prompts (router, rerank, generate, query expander, validation grounding) can be edited in the Streamlit sidebar without code changes or redeployment:
+All 6 pipeline prompts (router, rerank, generate, query expander, validation grounding, base-model fallback) can be edited in the Streamlit sidebar without code changes or redeployment:
 
 1. Open the **Prompt Management** section in the sidebar
 2. Edit the prompt text in the text area
@@ -323,17 +327,19 @@ embedding, persistent Chroma ingest, metadata pre-filtering (usecase +
 component_type + review_status), General-layer OR-merge, LLM query routing
 with self-query metadata filter extraction, multi-query expansion (3
 variations per query), LLM relevance grading, intent-aware reranking, chunk
-deduplication, soft fallback retrieval (⚠️ disclaimer answers when no
-high-confidence chunks found), grounded answer generation with citations,
-intent-aware output validation (citation existence + LLM grounding check with
-per-intent rubrics → pass/warn/fail verdict with reason and suggestion), user
-feedback (👍/👎) with cache invalidation loop, graceful refusal on
-out-of-domain queries, smart re-ingestion with version tracking, Azure Blob
-Storage integration (versioned artifacts + prompt templates), auto-ingest on
-startup, LLM retry logic, blob-backed prompt management for all 5 pipeline
-prompts, streaming answer generation, conversation history with follow-up
-support, session-scoped Q&A caching, and Streamlit demo UI with artifact
-upload, prompt editor (all 5 prompts), and feedback buttons.
+deduplication, base-model fallback (🧠 labelled, uncited answers from the base
+LLM's own pharma knowledge for in-domain questions with no approved chunk,
+toggled from the Streamlit sidebar; strict grounded-or-decline when off),
+grounded answer generation with citations, intent-aware output validation
+(citation existence + LLM grounding check with per-intent rubrics →
+pass/warn/fail verdict with reason and suggestion), user feedback (👍/👎) with
+cache invalidation loop, graceful refusal on out-of-domain queries, smart
+re-ingestion with version tracking, Azure Blob Storage integration (versioned
+artifacts + prompt templates), auto-ingest on startup, LLM retry logic,
+blob-backed prompt management for all 6 pipeline prompts, streaming answer
+generation, conversation history with follow-up support, session-scoped Q&A
+caching, and Streamlit demo UI with artifact upload, prompt editor (all 6
+prompts), and feedback buttons.
 
 **Does not cover:** NL-to-SQL, summarization, visualization (downstream nodes),
 encryption-at-rest, CI/CD image delivery, self-containment hardening. Those
@@ -341,13 +347,12 @@ are later phases per the PoC plan.
 
 ## Changelog
 
-### v0.8 — Working copy for Release 8 (2026-06-30)
+### v0.8 — Working copy for Release 8 (2026-07-13)
 
+- **Base-model fallback for ungrounded in-domain questions** — when a question is in the pharma domain (`route.in_domain=true`) but no chunk survives filtering (`graded_chunks` empty), `generate_node` now answers from the base LLM's own general pharma knowledge (closed-book, no citations) behind a prominent 🧠 `BASE_MODEL_DISCLAIMER`, sets `is_base_model=True`, and skips grounding validation. **Replaces** the previous weak-chunk soft fallback (`is_fallback` / `FALLBACK_DISCLAIMER` removed from the generate paths). Gated per-request by `state["base_model_enabled"]`: a Streamlit sidebar **"🧠 Base-model fallback" toggle** (default on) controls the UI; `ENABLE_BASE_MODEL_FALLBACK` env var (default on) sets the default for `chat.py` / the batch graph. When off, ungrounded in-domain queries are declined (strict grounded-or-decline). New editable prompt `base_model_system` added to `prompt_manager.py`; `make_generate_node` / `make_stream_generate` accept a `base_model_prompt` override; `agent_graph.build_agent_graph` threads `p.get("base_model_system")`; Streamlit shows a "Source: base model" caption and reframes the chunks expander as diagnostics-only
 - **Intent-aware self-validation** — `validation_node` now uses per-intent `INTENT_RUBRICS` (definition / how-to / advisory / comparison) to evaluate the generated answer; LLM returns a 3-tier `verdict: "pass" | "warn" | "fail"` with a `reason` and actionable `suggestion`; state key updated to `{"verdict", "passed", "issues", "reason", "suggestion"}`; in the Streamlit streaming path, `validate_answer()` (new standalone callable) is invoked after streaming completes and surfaces `st.warning()` for warn or `st.error()` for fail inline with the answer; skipped for fallback answers (already disclaimed) and offline mode (FakeChatLLM)
 - **All 5 prompts editable in Streamlit UI** — `query_expander` and `validation_grounding` added to `DEFAULT_PROMPTS` and `PROMPT_LABELS` in `prompt_manager.py`; both node factories (`make_query_expander_node`, `make_validation_node`) now accept `system_prompt` override; `agent_graph.py` passes `p.get("query_expander")` and `p.get("validation_grounding")` from the prompts dict; Streamlit sidebar prompt loop auto-displays all 5 (no UI change needed)
 - **Blob layout updated** — `prompts/` prefix now includes `query_expander.txt` and `validation_grounding.txt` in addition to the 3 original prompt files
-- **Relaxed loader validation** — only `artifact_id` + `component_type` are hard-required; other envelope keys soft-warn; controlled vocabularies (layer, component_type, review_status) are advisory — unknown values accepted with warning so new artifact generations don't block ingestion; YAML repair for common hand-authoring defects (missing colon-space)
-- **Auto-detect chunker** — unknown component_types now auto-detect their list key (`_detect_list_key()`) and item ID field (`_detect_id_field()`) instead of being silently skipped; known types still use curated field mappings
 
 ### v0.7 — Working copy for Release 7 (2026-06-30)
 
