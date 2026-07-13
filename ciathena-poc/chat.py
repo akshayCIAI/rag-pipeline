@@ -66,7 +66,10 @@ def print_result(state: dict) -> None:
 
     # Answer
     print(f"\n{SEPARATOR}")
-    print("  Answer")
+    if state.get("is_base_model"):
+        print("  Answer  (source: base model — ungrounded, uncited)")
+    else:
+        print("  Answer")
     print(SEPARATOR)
     for line in answer.split("\n"):
         print(f"  {line}")
