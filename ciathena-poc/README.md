@@ -127,6 +127,11 @@ user_query
 5. GENERATE (LLM, streamed)
    grounded answer + citations [artifact_id::chunk_id]
    tokens stream to UI in real time
+   if graded_chunks present:
+      · base-model fallback ON  → grounded answer may fill UNCOVERED aspects
+                                   (e.g. one side of a comparison) with labelled
+                                   🧠 (general knowledge); cited claims stay cited
+      · base-model fallback OFF → strict chunk-only ("not available" for gaps)
    if graded_chunks empty AND in_domain:
       · base-model fallback ON  → answer from base LLM's own pharma
                                    knowledge, 🧠 disclaimer, no citations,
@@ -349,6 +354,7 @@ are later phases per the PoC plan.
 
 ### v0.8 — Working copy for Release 8 (2026-07-13)
 
+- **Gap-filling augmentation for partially-grounded questions** — when chunks *are* retrieved but only cover part of the question (e.g. "compare Indian vs USA pharma ecosystem" where only US artifacts exist), the grounded path previously wrote "not available in provided chunks" for the uncovered side. With the base-model toggle ON, `generate_node` / `make_stream_generate` now append an `AUGMENTATION_CLAUSE` to the grounded system prompt so those gaps are filled with **clearly-labelled** general knowledge (prefixed `🧠 (general knowledge)` in prose or `🧠 general knowledge` in a table cell); chunk-based claims stay cited, no fabricated citations, and it must not contradict the chunks. The `validation_grounding` prompt is told not to flag `🧠`-marked additions as hallucinations. Toggle OFF keeps the grounded path strictly chunk-only.
 - **Base-model fallback for ungrounded in-domain questions** — when a question is in the pharma domain (`route.in_domain=true`) but no chunk survives filtering (`graded_chunks` empty), `generate_node` now answers from the base LLM's own general pharma knowledge (closed-book, no citations) behind a prominent 🧠 `BASE_MODEL_DISCLAIMER`, sets `is_base_model=True`, and skips grounding validation. **Replaces** the previous weak-chunk soft fallback (`is_fallback` / `FALLBACK_DISCLAIMER` removed from the generate paths). Gated per-request by `state["base_model_enabled"]`: a Streamlit sidebar **"🧠 Base-model fallback" toggle** (default on) controls the UI; `ENABLE_BASE_MODEL_FALLBACK` env var (default on) sets the default for `chat.py` / the batch graph. When off, ungrounded in-domain queries are declined (strict grounded-or-decline). New editable prompt `base_model_system` added to `prompt_manager.py`; `make_generate_node` / `make_stream_generate` accept a `base_model_prompt` override; `agent_graph.build_agent_graph` threads `p.get("base_model_system")`; Streamlit shows a "Source: base model" caption and reframes the chunks expander as diagnostics-only
 - **Intent-aware self-validation** — `validation_node` now uses per-intent `INTENT_RUBRICS` (definition / how-to / advisory / comparison) to evaluate the generated answer; LLM returns a 3-tier `verdict: "pass" | "warn" | "fail"` with a `reason` and actionable `suggestion`; state key updated to `{"verdict", "passed", "issues", "reason", "suggestion"}`; in the Streamlit streaming path, `validate_answer()` (new standalone callable) is invoked after streaming completes and surfaces `st.warning()` for warn or `st.error()` for fail inline with the answer; skipped for fallback answers (already disclaimed) and offline mode (FakeChatLLM)
 - **All 5 prompts editable in Streamlit UI** — `query_expander` and `validation_grounding` added to `DEFAULT_PROMPTS` and `PROMPT_LABELS` in `prompt_manager.py`; both node factories (`make_query_expander_node`, `make_validation_node`) now accept `system_prompt` override; `agent_graph.py` passes `p.get("query_expander")` and `p.get("validation_grounding")` from the prompts dict; Streamlit sidebar prompt loop auto-displays all 5 (no UI change needed)
